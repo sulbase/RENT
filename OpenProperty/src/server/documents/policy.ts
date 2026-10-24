@@ -29,7 +29,8 @@ export const MAX_PROPERTY_FILE_BYTES = 30 * 1024 * 1024;
 export const MAX_PROPERTY_BYTES = 120 * 1024 * 1024;
 export const PROPERTY_FILE_TOO_LARGE = "Cada archivo puede pesar como máximo 30 MB";
 export const PROPERTY_FILE_LIMIT = "Esta propiedad admite como máximo 10 archivos";
-export const PROPERTY_STORAGE_LIMIT = "Los archivos de esta propiedad no pueden superar 120 MB en total";
+export const PROPERTY_STORAGE_LIMIT =
+  "Los archivos de esta propiedad no pueden superar 120 MB en total";
 /** Multipart overhead above the default file cap. Property uploads use their own ceiling. */
 export const MAX_UPLOAD_REQUEST_BYTES = MAX_FILE_BYTES + 1024 * 1024;
 export const MAX_ORG_FILES = 500;

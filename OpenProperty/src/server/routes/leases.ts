@@ -13,7 +13,11 @@ import {
   uuidParam,
   type SqlParam,
 } from "../pg";
-import { leaseClosePlan, leaseHoldsUnit, unitStatusAfterLeaseChange } from "../../shared/lease-unit";
+import {
+  leaseClosePlan,
+  leaseHoldsUnit,
+  unitStatusAfterLeaseChange,
+} from "../../shared/lease-unit";
 import {
   LEASE_ATTACHMENT_KINDS_KEY,
   normalizeLeaseAttachmentKinds,
@@ -303,7 +307,10 @@ export function mountLeasesRoutes(app: Hono<AppEnv>) {
 
     if (plan.action === "remove") {
       const keys = await collectCascadeKeys(c, "lease", id);
-      const removed = await run(c, "DELETE FROM leases WHERE id = $1 AND organization_id = $2", [id, o]);
+      const removed = await run(c, "DELETE FROM leases WHERE id = $1 AND organization_id = $2", [
+        id,
+        o,
+      ]);
       if (!removed.changes) return c.json({ error: "Not found" }, 404);
       await syncUnitsAfterLease(c, o, {
         previousUnitId: existing.unit_id,
