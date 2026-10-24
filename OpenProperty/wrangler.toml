@@ -53,10 +53,10 @@ enabled = true
 [observability.logs]
 enabled = true
 
-# Producción: Hyperdrive rent-supabase → pooler 6543, caché de consultas desactivada.
-# El string de conexión no va en el repo. En local, scripts/dev-api.mjs inyecta
-# CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE desde DATABASE_POOLED_URL
-# (wrangler lo exige en el entorno del proceso, antes de leer .dev.vars).
+# Hyperdrive rent-supabase → Postgres directo (db.[ref].supabase.co:5432).
+# El origen no puede ser el pooler 6543: Hyperdrive ya hace pooling y esa
+# combinación colgaba /api/health. DATABASE_URL (6543) queda como respaldo
+# si este binding no está presente.
 [[hyperdrive]]
 binding = "HYPERDRIVE"
 id = "6a5f5c4f4d9945a78312490ab24c881a"
