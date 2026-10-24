@@ -18,6 +18,7 @@ export function PageShell({
   meta,
   actions,
   width = "max-w-7xl",
+  notifications = true,
   children,
 }: {
   title: React.ReactNode;
@@ -25,6 +26,8 @@ export function PageShell({
   meta?: React.ReactNode;
   actions?: React.ReactNode;
   width?: string;
+  /** The bell reads the team's mailbox; the tenant portal turns it off. */
+  notifications?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -39,7 +42,7 @@ export function PageShell({
           <div className="flex-1" />
         )}
         <div className="flex shrink-0 items-center gap-2">
-          <NotificationBell />
+          {notifications && <NotificationBell />}
           {actions}
         </div>
       </header>

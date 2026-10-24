@@ -47,7 +47,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   landlord_government_id: "",
 };
 
-function parseSettings(raw: Record<string, string>): AppSettings {
+export function parseSettings(raw: Record<string, string>): AppSettings {
   const num = (key: "default_rent_due_day" | "late_fee_amount" | "late_fee_grace_days", fallback: number) => {
     const v = parseFloat(raw[key]);
     return Number.isFinite(v) ? v : fallback;

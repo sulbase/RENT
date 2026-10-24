@@ -230,6 +230,15 @@ export function mountTenantsRoutes(app: Hono<AppEnv>) {
       params,
     );
     if (!r.changes) return c.json({ error: "Not found" }, 404);
+    if (data.email !== undefined) {
+      await run(
+        c,
+        `DELETE FROM tenant_invitations
+         WHERE tenant_id = $1 AND organization_id = $2 AND accepted_at IS NULL
+           AND email <> lower(btrim(coalesce($3, '')))`,
+        [id, o, data.email ?? null],
+      );
+    }
     const row = await get(c, "SELECT * FROM tenants WHERE id = $1 AND organization_id = $2", [
       id,
       o,

@@ -76,6 +76,8 @@ type ResolvedRecipient = {
   id: string;
   email: string;
   role: "to" | "cc";
+  /** Portal account of a tenant recipient, when linked. */
+  portalUserId?: string | null;
 };
 
 function senderId(c: Context<AppEnv>): string | null {
@@ -329,7 +331,8 @@ export function mountMessageRoutes(app: Hono<AppEnv>) {
             organizationId: org,
             threadId,
             kind: recipient.kind,
-            userId: recipient.kind === "membership" ? recipient.id : null,
+            userId:
+              recipient.kind === "membership" ? recipient.id : (recipient.portalUserId ?? null),
             tenantId: recipient.kind === "tenant" ? recipient.id : null,
             email: recipient.email,
             role: recipient.role,
@@ -443,9 +446,9 @@ async function resolveRecipients(
       )
     : [];
   const tenants = tenantIds.length
-    ? await txQuery<{ id: string; email: string }>(
+    ? await txQuery<{ id: string; email: string; user_id?: string | null }>(
         tx,
-        `SELECT id, lower(email) AS email
+        `SELECT id, lower(email) AS email, user_id
          FROM tenants
          WHERE organization_id = $1::uuid
            AND id = ANY($2::uuid[])
@@ -454,15 +457,15 @@ async function resolveRecipients(
       )
     : [];
   const memberById = new Map(members.map((row) => [row.user_id, row.email]));
-  const tenantById = new Map(tenants.map((row) => [row.id, row.email]));
+  const tenantById = new Map(tenants.map((row) => [row.id, row]));
   const recipients: ResolvedRecipient[] = [];
   for (const recipient of requested) {
-    const email =
-      recipient.kind === "membership" ? memberById.get(recipient.id) : tenantById.get(recipient.id);
+    const tenant = recipient.kind === "tenant" ? tenantById.get(recipient.id) : undefined;
+    const email = recipient.kind === "membership" ? memberById.get(recipient.id) : tenant?.email;
     if (!email) {
       return { ok: false, status: 400, error: "Recipient is not in this organization" };
     }
-    recipients.push({ ...recipient, email });
+    recipients.push({ ...recipient, email, portalUserId: tenant?.user_id ?? null });
   }
   return { ok: true, recipients };
 }

@@ -351,6 +351,8 @@ export const tenants = pgTable(
     previousAddress: text("previous_address"),
     occupantCount: integer("occupant_count"),
     notes: text("notes"),
+    /** Supabase Auth account with portal access. One account, one tenant record. */
+    userId: uuid("user_id"),
     metadata: jsonb("metadata").$type<JsonObject>().notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -358,6 +360,9 @@ export const tenants = pgTable(
   },
   (table) => [
     index("idx_tenants_org").on(table.organizationId),
+    uniqueIndex("uq_tenants_user")
+      .on(table.userId)
+      .where(sql`${table.userId} IS NOT NULL`),
     index("idx_tenants_org_name").on(
       table.organizationId,
       table.lastName,
@@ -384,6 +389,46 @@ export const tenants = pgTable(
       "tenants_occupant_count",
       sql`${table.occupantCount} IS NULL OR ${table.occupantCount} BETWEEN 0 AND 99`,
     ),
+  ],
+);
+
+/**
+ * Portal access keyed by email. Accepted on the first `/api/me` of that address
+ * (`acceptTenantInvitations`); no SMTP in this phase. One pending row per tenant
+ * and per email, so acceptance can never link one account to two records.
+ */
+export const tenantInvitations = pgTable(
+  "tenant_invitations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    tenantId: uuid("tenant_id").notNull(),
+    email: text("email").notNull(),
+    invitedBy: uuid("invited_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.organizationId],
+      foreignColumns: [tenants.id, tenants.organizationId],
+    }).onDelete("cascade"),
+    index("idx_tenant_invitations_org").on(table.organizationId),
+    index("idx_tenant_invitations_tenant").on(table.tenantId),
+    uniqueIndex("uq_tenant_invitations_pending_tenant")
+      .on(table.tenantId)
+      .where(sql`${table.acceptedAt} IS NULL`),
+    uniqueIndex("uq_tenant_invitations_pending_email")
+      .on(table.email)
+      .where(sql`${table.acceptedAt} IS NULL`),
+    check(
+      "tenant_invitations_email_len",
+      sql`char_length(${table.email}) BETWEEN 3 AND 254`,
+    ),
+    check("tenant_invitations_email_lower", sql`${table.email} = lower(${table.email})`),
   ],
 );
 
@@ -693,6 +738,7 @@ export const messageThreads = pgTable(
   ],
 );
 
+/** On a `tenant` row, `user_id` is that tenant's portal account once linked. */
 export const messageThreadParticipants = pgTable(
   "message_thread_participants",
   {
@@ -730,7 +776,7 @@ export const messageThreadParticipants = pgTable(
       "message_participants_kind",
       sql`(
         (${table.participantKind} = 'membership' AND ${table.userId} IS NOT NULL AND ${table.tenantId} IS NULL)
-        OR (${table.participantKind} = 'tenant' AND ${table.tenantId} IS NOT NULL AND ${table.userId} IS NULL)
+        OR (${table.participantKind} = 'tenant' AND ${table.tenantId} IS NOT NULL)
       )`,
     ),
   ],

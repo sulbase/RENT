@@ -11,14 +11,14 @@ import type { WorkOrder, WorkOrderStatus } from "@/types";
 import { PageShell } from "@/components/page-shell";
 import { priorityLabel, workStatusLabel } from "@/lib/labels";
 
-const PRIORITY_TONE: Record<string, string> = {
+export const PRIORITY_TONE: Record<string, string> = {
   urgent: "bg-destructive-tint text-destructive",
   high: "bg-warning-tint text-warning",
   normal: "bg-info-tint text-info",
   low: "bg-muted text-muted-foreground",
 };
 
-const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
+export const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
   open: "secondary",
   assigned: "default",
   in_progress: "default",

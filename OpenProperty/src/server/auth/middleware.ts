@@ -5,10 +5,12 @@ import { ensureSeeded } from "../seed";
 import { bearerToken, verifySupabaseAccessToken } from "./jwt";
 import { canMutate } from "./roles";
 import { resolveTenant } from "./tenant";
+import { resolvePortalTenant } from "./tenant-portal";
 import { uuidParam } from "../pg";
 
 const PUBLIC_PATHS = new Set(["/api/health", "/api/webhooks/firma"]);
 const JWT_ONLY_PATHS = new Set(["/api/auth/bootstrap", "/api/me", "/api/account"]);
+const PORTAL_PREFIX = "/api/portal/";
 
 /** Never bypass when JWT secret is configured (production must set the secret). */
 function isDevBypass(env: { AUTH_DEV_BYPASS?: string; SUPABASE_JWT_SECRET?: string }): boolean {
@@ -38,8 +40,11 @@ export const authMiddleware = factory.createMiddleware(async (c, next) => {
   }
 
   const db = c.get("db");
+  c.set("portalTenantId", null);
+  const portalPath = path.startsWith(PORTAL_PREFIX);
 
   if (isDevBypass(c.env)) {
+    if (portalPath) return c.json({ error: "Inicia sesión para ver el portal" }, 401);
     const slug = c.env.DEV_ORGANIZATION_SLUG ?? "dev";
     const oid = await resolveOrganizationId(db, slug);
     c.set("userId", null);
@@ -66,6 +71,15 @@ export const authMiddleware = factory.createMiddleware(async (c, next) => {
   c.set("userEmail", user.email ?? null);
 
   if (JWT_ONLY_PATHS.has(path)) {
+    return next();
+  }
+
+  if (portalPath) {
+    const portal = await resolvePortalTenant(c.get("sql"), user.sub);
+    if (!portal) return c.json({ error: "No tienes acceso al portal" }, 403);
+    c.set("orgId", portal.organizationId);
+    c.set("role", "viewer");
+    c.set("portalTenantId", portal.tenantId);
     return next();
   }
 

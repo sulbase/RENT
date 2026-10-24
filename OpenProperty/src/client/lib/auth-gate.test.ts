@@ -32,4 +32,18 @@ describe("resolveAuthScreen", () => {
   it("does not treat a profile error as a new organization", () => {
     expect(resolveAuthScreen({ ...base, profileError: "falló" })).toBe("profile-error");
   });
+
+  it("sends a linked tenant to the portal instead of organization setup", () => {
+    expect(resolveAuthScreen({ ...base, portal: true })).toBe("portal");
+  });
+
+  it("keeps the staff panel when the account also has an organization", () => {
+    expect(
+      resolveAuthScreen({
+        ...base,
+        portal: true,
+        organizationId: "00000000-0000-4000-8000-000000000001",
+      }),
+    ).toBe("app");
+  });
 });

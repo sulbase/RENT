@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { leaseStatusLabel } from "@/lib/labels";
 import { TenantIdentification } from "./tenant-identification";
 import { TenantDialog } from "./tenant-dialog";
+import { TenantPortalAccess } from "./tenant-portal-access";
 import { maritalStatusLabel } from "../../../shared/tenant-profile";
 import type { Lease, Tenant, TenantPayment } from "@/types";
 import {
@@ -141,6 +142,8 @@ export function TenantPage({ id, navigate }: { id: string; navigate: (to: string
                 </ul>
               )}
             </Card>
+
+            <TenantPortalAccess tenantId={tenant.id} email={tenant.email} />
 
             <Card className="p-5">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
