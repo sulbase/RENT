@@ -53,13 +53,13 @@ enabled = true
 [observability.logs]
 enabled = true
 
-# Hyperdrive rent-supabase (6a5f5c4f4d9945a78312490ab24c881a) quedó apagado:
-# el pooler 6543 colgaba /api/health y el 5432 respondía 503. El Worker usa
-# el secreto DATABASE_URL (6543). Volver a enlazar el binding solo tras una
-# prueba real de /api/health en producción.
-# [[hyperdrive]]
-# binding = "HYPERDRIVE"
-# id = "6a5f5c4f4d9945a78312490ab24c881a"
+# Hyperdrive rent-supabase → Postgres directo (db.[ref].supabase.co:5432).
+# El origen no puede ser el pooler 6543: Hyperdrive ya hace pooling y esa
+# combinación colgaba /api/health. DATABASE_URL (6543) queda como respaldo
+# si este binding no está presente.
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "6a5f5c4f4d9945a78312490ab24c881a"
 
 # Bucket privado. `wrangler dev` simula el binding en local (preview_bucket_name).
 # Crear antes del deploy: `wrangler r2 bucket create rent-files` y `wrangler r2 bucket create rent-files-dev`.
