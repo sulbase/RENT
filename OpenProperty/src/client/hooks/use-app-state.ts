@@ -26,6 +26,10 @@ export interface AppSettings {
   language: "es" | "en";
   date_format: "dd/MM/yyyy" | "MM/dd/yyyy" | "yyyy-MM-dd";
   area_unit: "m2" | "ft2";
+  landlord_first_name: string;
+  landlord_last_name: string;
+  landlord_email: string;
+  landlord_government_id: string;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -37,6 +41,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   language: "es",
   date_format: "dd/MM/yyyy",
   area_unit: "m2",
+  landlord_first_name: "",
+  landlord_last_name: "",
+  landlord_email: "",
+  landlord_government_id: "",
 };
 
 function parseSettings(raw: Record<string, string>): AppSettings {
@@ -59,6 +67,10 @@ function parseSettings(raw: Record<string, string>): AppSettings {
     language,
     date_format: dateFormat,
     area_unit: areaUnit,
+    landlord_first_name: raw.landlord_first_name?.trim() ?? "",
+    landlord_last_name: raw.landlord_last_name?.trim() ?? "",
+    landlord_email: raw.landlord_email?.trim() ?? "",
+    landlord_government_id: raw.landlord_government_id?.trim() ?? "",
   };
   setFormatPrefs({
     language: parsed.language,
@@ -212,8 +224,16 @@ export function useAppState() {
 
   // Rent / payments ────────────────────────────────────────────────
 
-  const listCharges = useCallback(async (period?: string): Promise<RentCharge[]> => {
-    const path = period ? `/api/rent-charges?period=${encodeURIComponent(period)}` : "/api/rent-charges";
+  const listCharges = useCallback(async (params?: {
+    period?: string;
+    status?: string;
+    property_id?: string;
+  }): Promise<RentCharge[]> => {
+    const qs = new URLSearchParams();
+    if (params?.period) qs.set("period", params.period);
+    if (params?.status) qs.set("status", params.status);
+    if (params?.property_id) qs.set("property_id", params.property_id);
+    const path = qs.toString() ? `/api/rent-charges?${qs.toString()}` : "/api/rent-charges";
     const data = await api<{ charges: RentCharge[] }>("GET", path);
     return data.charges;
   }, []);

@@ -79,6 +79,18 @@ export async function collectCascadeKeys(
   return rows.map((row) => row.r2_key).filter((key) => key.length > 0);
 }
 
+/** Hide a lease's files and return the R2 keys so the caller can drop the binaries. */
+export async function retireLeaseFiles(c: Context<AppEnv>, leaseId: string): Promise<string[]> {
+  const rows = await query<{ r2_key: string }>(
+    c,
+    `UPDATE documents SET deleted_at = now()
+     WHERE organization_id = $1 AND entity_type = 'lease' AND entity_id = $2 AND deleted_at IS NULL
+     RETURNING r2_key`,
+    [orgId(c), leaseId],
+  );
+  return rows.map((row) => row.r2_key).filter((key) => key.length > 0);
+}
+
 export async function deleteR2Keys(env: AppEnv["Bindings"], keys: string[]): Promise<void> {
   const bucket = env.FILES;
   if (!bucket || keys.length === 0) return;

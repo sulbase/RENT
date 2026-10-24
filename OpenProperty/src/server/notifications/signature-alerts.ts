@@ -19,10 +19,11 @@ export function signatureEventDraft(input: {
   event: "signed" | "completed" | "declined" | "expired";
   detail: string;
   signerEmail?: string;
+  label?: "contrato" | "inventario";
 }): NotificationDraft {
   const titles = {
     signed: "Firma recibida",
-    completed: "Contrato firmado",
+    completed: input.label === "inventario" ? "Inventario firmado" : "Contrato firmado",
     declined: "Firma rechazada",
     expired: "Solicitud de firma vencida",
   } as const;

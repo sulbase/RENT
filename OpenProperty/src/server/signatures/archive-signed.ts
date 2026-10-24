@@ -7,6 +7,7 @@ type SignatureRow = {
   organization_id: string;
   lease_id: string;
   document_id: string | null;
+  purpose?: string | null;
 };
 
 async function one<T>(sql: Sql, text: string, params: unknown[]): Promise<T | undefined> {
@@ -14,7 +15,7 @@ async function one<T>(sql: Sql, text: string, params: unknown[]): Promise<T | un
   return (rows as unknown as T[])[0];
 }
 
-/** Downloads the finished PDF and stores it as `documents.kind = signed_lease`. */
+/** Downloads the finished PDF and stores it on the lease, apart from the other signed file. */
 export async function archiveSignedLease(input: {
   sql: Sql;
   bucket: R2Bucket | undefined;
@@ -60,8 +61,10 @@ export async function archiveSignedLease(input: {
     return;
   }
 
+  const inventory = input.signature.purpose === "inventory";
   const documentId = crypto.randomUUID();
-  const filename = "contrato-firmado.pdf";
+  const filename = inventory ? "inventario-firmado.pdf" : "contrato-firmado.pdf";
+  const kind = inventory ? "signed_inventory" : "signed_lease";
   const r2Key = buildObjectKey({
     organizationId: input.signature.organization_id,
     entityType: "lease",
@@ -76,7 +79,7 @@ export async function archiveSignedLease(input: {
       `INSERT INTO documents (
          id, organization_id, entity_type, entity_id, lease_id,
          kind, r2_key, filename, mime, size_bytes, is_cover
-       ) VALUES ($1, $2, 'lease', $3, $3, 'signed_lease', $4, $5, 'application/pdf', $6, false)`,
+       ) VALUES ($1, $2, 'lease', $3, $3, $7, $4, $5, 'application/pdf', $6, false)`,
       [
         documentId,
         input.signature.organization_id,
@@ -84,6 +87,7 @@ export async function archiveSignedLease(input: {
         r2Key,
         filename,
         bytes.byteLength,
+        kind,
       ],
     );
     const linked = await one<{ id: string }>(

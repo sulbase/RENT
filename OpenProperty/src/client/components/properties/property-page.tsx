@@ -12,6 +12,8 @@ import { DocumentsPanel } from "@/components/documents/documents-panel";
 import { PropertyDialog } from "./property-dialog";
 import { UnitDialog } from "./unit-dialog";
 import { WorkOrderDialog } from "../maintenance/work-order-dialog";
+import { unitStatusLabel } from "@/lib/labels";
+import { unitTypeLabel } from "../../../shared/unit-types";
 import type { Property, Unit, WorkOrder } from "@/types";
 import { PageShell } from "@/components/page-shell";
 
@@ -156,17 +158,26 @@ export function PropertyPage({ id, navigate }: { id: string; navigate: (to: stri
                     <div>
                       <h3 className="font-semibold">{u.name}</h3>
                       <p className="mt-0.5 text-xs text-muted-foreground">
+                        {unitTypeLabel(u.unit_type ?? "departamento")}
+                        {u.floor != null ? ` · piso ${u.floor}` : ""}
+                        {u.furnished ? " · amoblado" : ""}
+                        {" · "}
                         {u.bedrooms} rec. · {u.bathrooms} baños{u.sqft ? ` · ${formatArea(u.sqft)}` : ""}
                       </p>
                     </div>
-                    <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold capitalize", STATUS_TONE[u.status])}>
-                      {u.status}
+                    <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold", STATUS_TONE[u.status])}>
+                      {unitStatusLabel(u.status)}
                     </span>
                   </div>
                   <div className="mt-3 flex items-end justify-between border-t pt-3">
                     <div>
                       <div className="stat-label">Market rent</div>
                       <div className="text-sm font-semibold tabular-nums">{formatMoney(u.market_rent, app.settings.currency)}</div>
+                      {(u.aliquot_price ?? 0) > 0 && (
+                        <div className="text-xs text-muted-foreground">
+                          Alícuota {formatMoney(u.aliquot_price, app.settings.currency)}
+                        </div>
+                      )}
                     </div>
                     {u.active_tenant_name && (
                       <div className="text-right text-xs text-muted-foreground">{u.active_tenant_name}</div>

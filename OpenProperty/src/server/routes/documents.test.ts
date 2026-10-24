@@ -25,6 +25,7 @@ type Doc = {
   size_bytes: number;
   uploaded_by: string | null;
   is_cover: boolean;
+  label: string | null;
   created_at: string;
   deleted_at: string | null;
 };
@@ -74,6 +75,43 @@ function createSql(entities: Entity[]) {
         (entity) => entity.type === type && entity.id === id && entity.organization_id === org,
       );
       return found ? [{ id }] : [];
+    }
+
+    if (text.includes("AS photo_count")) {
+      const [org, entityType, entityId] = params as [string, string, string];
+      return [
+        {
+          photo_count: docs.filter(
+            (doc) =>
+              doc.organization_id === org &&
+              doc.entity_type === entityType &&
+              doc.entity_id === entityId &&
+              !doc.deleted_at &&
+              doc.mime.startsWith("image/"),
+          ).length,
+        },
+      ];
+    }
+
+    if (text.includes("FROM settings")) {
+      return [];
+    }
+
+    if (text.includes("AS folder_count")) {
+      const [org, entityId] = params as [string, string];
+      const active = docs.filter(
+        (doc) =>
+          doc.organization_id === org &&
+          doc.entity_type === "property" &&
+          doc.entity_id === entityId &&
+          !doc.deleted_at,
+      );
+      return [
+        {
+          folder_count: active.length,
+          folder_bytes: active.reduce((sum, doc) => sum + doc.size_bytes, 0),
+        },
+      ];
     }
 
     if (text.includes("COUNT(*)")) {
@@ -137,6 +175,7 @@ function createSql(entities: Entity[]) {
         size_bytes,
         uploaded_by,
         is_cover,
+        label: (params[17] as string | null) ?? null,
         created_at: "2026-09-25T00:00:00.000Z",
         deleted_at: null,
       };
@@ -221,6 +260,7 @@ function publicRow(doc: Doc) {
     size_bytes: doc.size_bytes,
     uploaded_by: doc.uploaded_by,
     is_cover: doc.is_cover,
+    label: doc.label,
     created_at: doc.created_at,
   };
 }
@@ -238,6 +278,12 @@ function createApp(orgId: string, sql: Sql) {
   });
   mountDocumentsRoutes(app);
   return app;
+}
+
+function leasePng(leaseId: string, name: string) {
+  const form = pngForm(leaseId, name);
+  form.set("entity_type", "lease");
+  return form;
 }
 
 function pngForm(entityId: string, name: string, isCover = false) {
@@ -326,5 +372,90 @@ describe("documents API isolation", () => {
     );
     expect(res.status).toBe(404);
     expect(bucket.objects.size).toBe(0);
+  });
+
+  it("accepts only images on a lease and stops at 25 photos", async () => {
+    const leaseId = "20000000-0000-4000-8000-000000000020";
+    const sql = createSql([
+      ...entities,
+      { type: "lease", id: leaseId, organization_id: ORG_A },
+    ]);
+    const bucket = createBucket();
+    const app = createApp(ORG_A, sql);
+    const env = { FILES: bucket as unknown as R2Bucket };
+
+    const pdf = new FormData();
+    pdf.set("entity_type", "lease");
+    pdf.set("entity_id", leaseId);
+    pdf.set("kind", "invoice");
+    pdf.set(
+      "file",
+      new File([Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d])], "factura.pdf", {
+        type: "application/pdf",
+      }),
+    );
+    const rejected = await app.request("/api/documents", { method: "POST", body: pdf }, env);
+    expect(rejected.status).toBe(400);
+
+    for (let index = 0; index < 25; index += 1) {
+      const created = await app.request(
+        "/api/documents",
+        { method: "POST", body: leasePng(leaseId, `foto-${index}.png`) },
+        env,
+      );
+      expect(created.status).toBe(201);
+    }
+    const overflow = await app.request(
+      "/api/documents",
+      { method: "POST", body: leasePng(leaseId, "foto-extra.png") },
+      env,
+    );
+    expect(overflow.status).toBe(409);
+  });
+
+  it("stops a property folder at 10 files", async () => {
+    const sql = createSql(entities);
+    const bucket = createBucket();
+    const app = createApp(ORG_A, sql);
+    const env = { FILES: bucket as unknown as R2Bucket };
+
+    for (let index = 0; index < 10; index += 1) {
+      const created = await app.request(
+        "/api/documents",
+        { method: "POST", body: pngForm(PROP_A, `archivo-${index}.png`) },
+        env,
+      );
+      expect(created.status).toBe(201);
+    }
+    const blocked = await app.request(
+      "/api/documents",
+      { method: "POST", body: pngForm(PROP_A, "archivo-extra.png") },
+      env,
+    );
+    expect(blocked.status).toBe(409);
+    const body = (await blocked.json()) as { error: string };
+    expect(body.error).toContain("10 archivos");
+  });
+
+  it("stops unit image uploads at 25 photos", async () => {
+    const unitId = "20000000-0000-4000-8000-000000000021";
+    const sql = createSql([
+      ...entities,
+      { type: "unit", id: unitId, organization_id: ORG_A },
+    ]);
+    const bucket = createBucket();
+    const app = createApp(ORG_A, sql);
+    const env = { FILES: bucket as unknown as R2Bucket };
+
+    for (let index = 0; index < 25; index += 1) {
+      const form = pngForm(unitId, `foto-${index}.png`);
+      form.set("entity_type", "unit");
+      const created = await app.request("/api/documents", { method: "POST", body: form }, env);
+      expect(created.status).toBe(201);
+    }
+    const overflow = pngForm(unitId, "foto-extra.png");
+    overflow.set("entity_type", "unit");
+    const blocked = await app.request("/api/documents", { method: "POST", body: overflow }, env);
+    expect(blocked.status).toBe(409);
   });
 });

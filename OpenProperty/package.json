@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n ui,api -c cyan,green --restart-tries 3 --restart-after 1500 \"vite\" \"wrangler dev --port 8787\"",
+    "dev": "concurrently -k -n ui,api -c cyan,green --restart-tries 3 --restart-after 1500 \"vite\" \"node scripts/dev-api.mjs\"",
     "prepare:local-auth": "node scripts/prepare-local-auth.mjs",
     "dev:auth": "node scripts/prepare-local-auth.mjs && pnpm dev",
     "db:migrate:d1": "wrangler d1 execute open-property-db --local --file=src/server/schema.sql",

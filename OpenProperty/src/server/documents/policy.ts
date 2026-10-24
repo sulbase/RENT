@@ -14,13 +14,23 @@ export const DOCUMENT_KINDS = [
   "certificate",
   "invoice",
   "signed_lease",
+  "inventory",
+  "signed_inventory",
   "other",
 ] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 
-/** Per-file cap. Matches the `documents_size_bytes` check constraint. */
+/** Default per-file cap. Lease photos and property files use their own limits. */
+export const MAX_ENTITY_IMAGE_PHOTOS = 25;
 export const MAX_FILE_BYTES = 10 * 1024 * 1024;
-/** Multipart overhead above the file itself. */
+/** One folder per property: 10 files, 30 MB each, 120 MB together. */
+export const MAX_PROPERTY_FILES = 10;
+export const MAX_PROPERTY_FILE_BYTES = 30 * 1024 * 1024;
+export const MAX_PROPERTY_BYTES = 120 * 1024 * 1024;
+export const PROPERTY_FILE_TOO_LARGE = "Cada archivo puede pesar como máximo 30 MB";
+export const PROPERTY_FILE_LIMIT = "Esta propiedad admite como máximo 10 archivos";
+export const PROPERTY_STORAGE_LIMIT = "Los archivos de esta propiedad no pueden superar 120 MB en total";
+/** Multipart overhead above the default file cap. Property uploads use their own ceiling. */
 export const MAX_UPLOAD_REQUEST_BYTES = MAX_FILE_BYTES + 1024 * 1024;
 export const MAX_ORG_FILES = 500;
 export const MAX_ORG_BYTES = 500 * 1024 * 1024;
@@ -144,9 +154,16 @@ export function validateUpload(input: {
   size: number;
   kind: DocumentKind;
   isCover: boolean;
+  maxBytes?: number;
+  oversizeError?: string;
+  imagesOnly?: boolean;
+  imagesOnlyError?: string;
 }): FileCheck {
+  const maxBytes = input.maxBytes ?? MAX_FILE_BYTES;
   if (input.size <= 0) return { ok: false, error: "Empty file" };
-  if (input.size > MAX_FILE_BYTES) return { ok: false, error: "File exceeds 10 MB" };
+  if (input.size > maxBytes) {
+    return { ok: false, error: input.oversizeError ?? "File exceeds 10 MB" };
+  }
   if (input.bytes.byteLength < Math.min(input.size, 12) && input.size >= 12) {
     return { ok: false, error: "Could not read file header" };
   }
@@ -167,8 +184,11 @@ export function validateUpload(input: {
   const sniffed = sniffMime(input.bytes);
   if (sniffed !== expected) return { ok: false, error: "File contents do not match its type" };
 
-  if (input.kind === "image" && !expected.startsWith("image/")) {
-    return { ok: false, error: "Images must be JPEG, PNG, WebP, or GIF" };
+  if ((input.imagesOnly || input.kind === "image") && !expected.startsWith("image/")) {
+    return {
+      ok: false,
+      error: input.imagesOnlyError ?? "Images must be JPEG, PNG, WebP, or GIF",
+    };
   }
   if (input.isCover && input.kind !== "image") {
     return { ok: false, error: "Only images can be the cover" };
@@ -187,6 +207,20 @@ export function orgQuotaAllows(input: {
   }
   if (input.totalBytes + input.nextSize > MAX_ORG_BYTES) {
     return { ok: false, error: "Organization storage limit reached" };
+  }
+  return { ok: true };
+}
+
+export function propertyQuotaAllows(input: {
+  fileCount: number;
+  totalBytes: number;
+  nextSize: number;
+}): { ok: true } | { ok: false; error: string } {
+  if (input.fileCount + 1 > MAX_PROPERTY_FILES) {
+    return { ok: false, error: PROPERTY_FILE_LIMIT };
+  }
+  if (input.totalBytes + input.nextSize > MAX_PROPERTY_BYTES) {
+    return { ok: false, error: PROPERTY_STORAGE_LIMIT };
   }
   return { ok: true };
 }

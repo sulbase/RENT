@@ -40,6 +40,15 @@ export const unitStatusEnum = pgEnum("unit_status", [
   "unavailable",
 ]);
 
+export const maritalStatusEnum = pgEnum("marital_status", [
+  "soltero",
+  "casado",
+  "divorciado",
+  "viudo",
+  "union_libre",
+  "separado",
+]);
+
 export const leaseStatusEnum = pgEnum("lease_status", [
   "upcoming",
   "active",
@@ -129,8 +138,12 @@ export const documentKindEnum = pgEnum("document_kind", [
   "certificate",
   "invoice",
   "signed_lease",
+  "inventory",
+  "signed_inventory",
   "other",
 ]);
+
+export const signaturePurposeEnum = pgEnum("signature_purpose", ["lease", "inventory"]);
 
 export const signatureProviderEnum = pgEnum("signature_provider", ["firma_dev"]);
 
@@ -280,6 +293,14 @@ export const units = pgTable(
       .notNull()
       .default("0"),
     status: unitStatusEnum("status").notNull().default("vacant"),
+    /** Piso del edificio. Negativo para sótanos. */
+    floor: integer("floor"),
+    /** Slug fijo (departamento, suite, local, parqueadero) o etiqueta extra de la organización. */
+    unitType: text("unit_type").notNull().default("departamento"),
+    furnished: boolean("furnished").notNull().default(false),
+    aliquotPrice: numeric("aliquot_price", { precision: 12, scale: 2 })
+      .notNull()
+      .default("0"),
     notes: text("notes"),
     metadata: jsonb("metadata").$type<JsonObject>().notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -295,6 +316,15 @@ export const units = pgTable(
     index("idx_units_property").on(table.propertyId),
     index("idx_units_org_status").on(table.organizationId, table.status),
     uniqueIndex("uq_units_id_org").on(table.id, table.organizationId),
+    check(
+      "units_floor",
+      sql`${table.floor} IS NULL OR ${table.floor} BETWEEN -5 AND 200`,
+    ),
+    check(
+      "units_unit_type_len",
+      sql`char_length(${table.unitType}) BETWEEN 1 AND 40`,
+    ),
+    check("units_aliquot_price", sql`${table.aliquotPrice} >= 0`),
   ],
 );
 
@@ -313,6 +343,13 @@ export const tenants = pgTable(
     emergencyContact: text("emergency_contact"),
     employer: text("employer"),
     monthlyIncome: numeric("monthly_income", { precision: 12, scale: 2 }),
+    /** Número de identificación (CURP u otro). Máximo 18 caracteres. */
+    governmentId: text("government_id"),
+    maritalStatus: maritalStatusEnum("marital_status"),
+    occupation: text("occupation"),
+    workAddress: text("work_address"),
+    previousAddress: text("previous_address"),
+    occupantCount: integer("occupant_count"),
     notes: text("notes"),
     metadata: jsonb("metadata").$type<JsonObject>().notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -327,6 +364,26 @@ export const tenants = pgTable(
       table.firstName,
     ),
     uniqueIndex("uq_tenants_id_org").on(table.id, table.organizationId),
+    check(
+      "tenants_government_id_len",
+      sql`${table.governmentId} IS NULL OR char_length(${table.governmentId}) BETWEEN 1 AND 18`,
+    ),
+    check(
+      "tenants_occupation_len",
+      sql`${table.occupation} IS NULL OR char_length(${table.occupation}) BETWEEN 1 AND 80`,
+    ),
+    check(
+      "tenants_work_address_len",
+      sql`${table.workAddress} IS NULL OR char_length(${table.workAddress}) BETWEEN 1 AND 200`,
+    ),
+    check(
+      "tenants_previous_address_len",
+      sql`${table.previousAddress} IS NULL OR char_length(${table.previousAddress}) BETWEEN 1 AND 200`,
+    ),
+    check(
+      "tenants_occupant_count",
+      sql`${table.occupantCount} IS NULL OR ${table.occupantCount} BETWEEN 0 AND 99`,
+    ),
   ],
 );
 
@@ -370,6 +427,9 @@ export const leases = pgTable(
     index("idx_leases_tenant").on(table.primaryTenantId),
     index("idx_leases_org_status").on(table.organizationId, table.status),
     uniqueIndex("uq_leases_id_org").on(table.id, table.organizationId),
+    uniqueIndex("uq_leases_open_unit")
+      .on(table.organizationId, table.unitId)
+      .where(sql`${table.status} in ('upcoming', 'active')`),
   ],
 );
 
@@ -442,6 +502,9 @@ export const payments = pgTable(
     method: paymentMethodEnum("method").notNull().default("cash"),
     reference: text("reference"),
     notes: text("notes"),
+    voidedAt: timestamp("voided_at", { withTimezone: true }),
+    voidReason: text("void_reason"),
+    voidedBy: uuid("voided_by"),
     metadata: jsonb("metadata").$type<JsonObject>().notNull().default({}),
   },
   (table) => [
@@ -451,7 +514,20 @@ export const payments = pgTable(
     }).onDelete("cascade"),
     index("idx_payments_org").on(table.organizationId),
     index("idx_payments_charge").on(table.chargeId),
+    index("idx_payments_active_charge")
+      .on(table.organizationId, table.chargeId)
+      .where(sql`${table.voidedAt} IS NULL`),
     uniqueIndex("uq_payments_id_org").on(table.id, table.organizationId),
+    check(
+      "payments_void_pair",
+      sql`(
+        ${table.voidedAt} IS NULL AND ${table.voidReason} IS NULL
+      ) OR (
+        ${table.voidedAt} IS NOT NULL
+        AND ${table.voidReason} IS NOT NULL
+        AND char_length(${table.voidReason}) BETWEEN 1 AND 200
+      )`,
+    ),
   ],
 );
 
@@ -705,8 +781,8 @@ export const messageReads = pgTable(
   ],
 );
 
-/** 10 MiB per file. Enforced again in the upload route. */
-const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
+/** Database ceiling. Lease photos allow 15 MiB; other uploads stay at 10 MiB in the route. */
+const MAX_DOCUMENT_BYTES = 15 * 1024 * 1024;
 
 export const documents = pgTable(
   "documents",
@@ -730,6 +806,8 @@ export const documents = pgTable(
     sizeBytes: integer("size_bytes").notNull(),
     uploadedBy: uuid("uploaded_by"),
     isCover: boolean("is_cover").notNull().default(false),
+    /** Extra category chosen from the organization's lease attachment list. */
+    label: text("label"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
@@ -791,6 +869,14 @@ export const documents = pgTable(
       "documents_size_bytes",
       sql`(${table.sizeBytes} > 0 AND ${table.sizeBytes} <= ${sql.raw(String(MAX_DOCUMENT_BYTES))})`,
     ),
+    check(
+      "documents_label_len",
+      sql`(${table.label} IS NULL OR char_length(${table.label}) BETWEEN 1 AND 40)`,
+    ),
+    check(
+      "documents_label_kind",
+      sql`(${table.label} IS NULL OR ${table.kind} = 'other')`,
+    ),
   ],
 );
 
@@ -802,6 +888,7 @@ export const leaseSignatures = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
     leaseId: uuid("lease_id").notNull(),
+    purpose: signaturePurposeEnum("purpose").notNull().default("lease"),
     provider: signatureProviderEnum("provider").notNull().default("firma_dev"),
     providerRequestId: text("provider_request_id"),
     status: leaseSignatureStatusEnum("status").notNull().default("draft"),
@@ -830,7 +917,7 @@ export const leaseSignatures = pgTable(
       .on(table.providerRequestId)
       .where(sql`${table.providerRequestId} IS NOT NULL`),
     uniqueIndex("uq_lease_signatures_open")
-      .on(table.organizationId, table.leaseId)
+      .on(table.organizationId, table.leaseId, table.purpose)
       .where(
         sql`${table.status} IN ('draft', 'sent', 'viewed', 'partially_signed')`,
       ),

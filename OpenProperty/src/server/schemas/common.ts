@@ -19,6 +19,10 @@ export const settingsPatchSchema = z
     language: settingValue.optional(),
     date_format: settingValue.optional(),
     area_unit: settingValue.optional(),
+    landlord_first_name: settingValue.optional(),
+    landlord_last_name: settingValue.optional(),
+    landlord_email: settingValue.optional(),
+    landlord_government_id: settingValue.optional(),
   })
   .strict();
 

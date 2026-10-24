@@ -13,6 +13,14 @@ import {
   type SqlParam,
 } from "../pg";
 import { MARK_OVERDUE_FOR_ORG_SQL } from "../notifications/alerts";
+import {
+  ACTIVE_PAYMENT_SUM_SQL,
+  APPLY_CHARGE_BALANCE_SQL,
+  centsToAmount,
+  hasAtMostTwoDecimals,
+  rejectPayment,
+  toCents,
+} from "../rent/payment-balance";
 import { periodSchema, rentChargeStatusSchema } from "../schemas/common";
 import { parseJson, parseQuery } from "../validation";
 
@@ -43,13 +51,14 @@ export function mountRentRoutes(app: Hono<AppEnv>) {
   const ListChargesQuery = z.object({
     period: periodSchema.optional(),
     status: rentChargeStatusSchema.optional(),
+    property_id: z.string().uuid().optional(),
   });
 
   app.get("/api/rent-charges", async (c) => {
     const q = parseQuery(c, ListChargesQuery);
     if (!q.ok) return c.json({ error: q.error }, 400);
     const o = orgId(c);
-    const { period, status } = q.data;
+    const { period, status, property_id: propertyId } = q.data;
     const filters: string[] = [];
     const params: SqlParam[] = [o];
     let n = 2;
@@ -60,6 +69,10 @@ export function mountRentRoutes(app: Hono<AppEnv>) {
     if (status) {
       filters.push(`c.status = $${n++}`);
       params.push(status);
+    }
+    if (propertyId) {
+      filters.push(`p.id = $${n++}`);
+      params.push(propertyId);
     }
     const extra = filters.length ? `AND ${filters.join(" AND ")}` : "";
     const rows = await query(
@@ -174,10 +187,17 @@ export function mountRentRoutes(app: Hono<AppEnv>) {
   const PaymentInput = z.object({
     charge_id: z.string().uuid(),
     paid_at: z.string().optional(),
-    amount: z.number().min(0),
+    amount: z
+      .number()
+      .positive()
+      .refine(hasAtMostTwoDecimals, "El importe debe tener como máximo 2 decimales."),
     method: z.enum(["cash", "check", "ach", "credit", "other"]).optional(),
     reference: z.string().optional().nullable(),
     notes: z.string().optional().nullable(),
+  });
+
+  const VoidInput = z.object({
+    reason: z.string().trim().min(1).max(200),
   });
 
   app.get("/api/rent-charges/:id/payments", async (c) => {
@@ -197,72 +217,89 @@ export function mountRentRoutes(app: Hono<AppEnv>) {
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const d = parsed.data;
     const o = orgId(c);
-    await run(
-      c,
-      `INSERT INTO payments (organization_id, charge_id, paid_at, amount, method, reference, notes)
-     VALUES ($1, $2, COALESCE($3::timestamptz, now()), $4, $5, $6, $7)`,
-      [
-        o,
+    const amountCents = toCents(d.amount);
+    const outcome = await c.get("sql").begin(async (tx) => {
+      const charges = await tx.unsafe<{ amount: string; status: string }[]>(
+        "SELECT amount::text, status FROM rent_charges WHERE id = $1 AND organization_id = $2 FOR UPDATE",
+        [d.charge_id, o],
+      );
+      const charge = charges[0];
+      if (!charge) return { error: "Cargo no encontrado", status: 404 as const };
+      const sums = await tx.unsafe<{ total: string }[]>(ACTIVE_PAYMENT_SUM_SQL, [d.charge_id, o]);
+      const paidCents = toCents(sums[0]?.total ?? "0");
+      const rejection = rejectPayment({
+        chargeStatus: charge.status,
+        chargeCents: toCents(charge.amount),
+        paidCents,
+        amountCents,
+      });
+      if (rejection) return { error: rejection, status: 400 as const };
+      await tx.unsafe(
+        `INSERT INTO payments (organization_id, charge_id, paid_at, amount, method, reference, notes)
+         VALUES ($1, $2, COALESCE($3::timestamptz, now()), $4, $5, $6, $7)`,
+        [
+          o,
+          d.charge_id,
+          d.paid_at ?? null,
+          centsToAmount(amountCents),
+          d.method ?? "cash",
+          d.reference ?? null,
+          d.notes ?? null,
+        ],
+      );
+      await tx.unsafe(APPLY_CHARGE_BALANCE_SQL, [
+        centsToAmount(paidCents + amountCents),
         d.charge_id,
-        d.paid_at ?? null,
-        String(d.amount),
-        d.method ?? "cash",
-        d.reference ?? null,
-        d.notes ?? null,
-      ],
-    );
-    const charge = await get<{ amount: string }>(
-      c,
-      "SELECT amount FROM rent_charges WHERE id = $1 AND organization_id = $2",
-      [d.charge_id, o],
-    );
-    if (!charge) return c.json({ error: "Charge not found" }, 404);
-    const sumRow = await get<{ total: string }>(
-      c,
-      "SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE charge_id = $1 AND organization_id = $2",
-      [d.charge_id, o],
-    );
-    const paid = Number(sumRow?.total ?? 0);
-    const amount = Number(charge.amount);
-    const status = paid >= amount ? "paid" : paid > 0 ? "partial" : "open";
-    await run(
-      c,
-      "UPDATE rent_charges SET amount_paid = $1, status = $2 WHERE id = $3 AND organization_id = $4",
-      [String(paid), status, d.charge_id, o],
-    );
+        o,
+      ]);
+      return { ok: true as const };
+    });
+    if ("error" in outcome) return c.json({ error: outcome.error }, outcome.status);
     const updated = await get(c, `${chargeSelect("AND c.id = $2")}`, [o, d.charge_id]);
     return c.json({ charge: normalizeRow(updated as Record<string, unknown>) }, 201);
   });
 
-  app.delete("/api/payments/:id", async (c) => {
+  app.post("/api/payments/:id/void", async (c) => {
     const id = uuidParam(c.req.param("id"));
     if (!id) return c.json({ error: "Invalid ID" }, 400);
+    const parsed = await parseJson(c, VoidInput);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const o = orgId(c);
-    const row = await get<{ charge_id: string }>(
+    const outcome = await c.get("sql").begin(async (tx) => {
+      const rows = await tx.unsafe<{ charge_id: string; voided_at: string | null }[]>(
+        "SELECT charge_id, voided_at FROM payments WHERE id = $1 AND organization_id = $2 FOR UPDATE",
+        [id, o],
+      );
+      const payment = rows[0];
+      if (!payment) return { error: "Pago no encontrado", status: 404 as const };
+      if (payment.voided_at) return { error: "Este pago ya está anulado.", status: 409 as const };
+      await tx.unsafe(
+        `UPDATE payments
+         SET voided_at = now(), void_reason = $3, voided_by = $4
+         WHERE id = $1 AND organization_id = $2 AND voided_at IS NULL`,
+        [id, o, parsed.data.reason, c.get("userId")],
+      );
+      const sums = await tx.unsafe<{ total: string }[]>(ACTIVE_PAYMENT_SUM_SQL, [
+        payment.charge_id,
+        o,
+      ]);
+      await tx.unsafe(APPLY_CHARGE_BALANCE_SQL, [
+        centsToAmount(toCents(sums[0]?.total ?? "0")),
+        payment.charge_id,
+        o,
+      ]);
+      return { ok: true as const, chargeId: payment.charge_id };
+    });
+    if ("error" in outcome) return c.json({ error: outcome.error }, outcome.status);
+    const updated = await get(c, `${chargeSelect("AND c.id = $2")}`, [o, outcome.chargeId]);
+    const payments = await query(
       c,
-      "SELECT charge_id FROM payments WHERE id = $1 AND organization_id = $2",
-      [id, o],
+      "SELECT * FROM payments WHERE charge_id = $1 AND organization_id = $2 ORDER BY paid_at DESC",
+      [outcome.chargeId, o],
     );
-    if (!row) return c.json({ error: "Not found" }, 404);
-    await run(c, "DELETE FROM payments WHERE id = $1 AND organization_id = $2", [id, o]);
-    const sumRow = await get<{ total: string }>(
-      c,
-      "SELECT COALESCE(SUM(amount), 0) as total FROM payments WHERE charge_id = $1 AND organization_id = $2",
-      [row.charge_id, o],
-    );
-    const charge = await get<{ amount: string }>(
-      c,
-      "SELECT amount FROM rent_charges WHERE id = $1 AND organization_id = $2",
-      [row.charge_id, o],
-    );
-    const paid = Number(sumRow?.total ?? 0);
-    const amount = charge ? Number(charge.amount) : 0;
-    const status = !charge ? "open" : paid >= amount ? "paid" : paid > 0 ? "partial" : "open";
-    await run(
-      c,
-      "UPDATE rent_charges SET amount_paid = $1, status = $2 WHERE id = $3 AND organization_id = $4",
-      [String(paid), status, row.charge_id, o],
-    );
-    return c.json({ ok: true });
+    return c.json({
+      charge: normalizeRow(updated as Record<string, unknown>),
+      payments: normalizeRows(payments),
+    });
   });
 }

@@ -3,6 +3,7 @@ import {
   buildObjectKey,
   normalizeObjectName,
   orgQuotaAllows,
+  propertyQuotaAllows,
   sniffMime,
   validateUpload,
 } from "./policy";
@@ -52,6 +53,32 @@ describe("validateUpload", () => {
     expect(sniffMime(PNG)).toBe("image/png");
   });
 
+  it("accepts a 15 MB lease photo and rejects a pdf when images are required", () => {
+    const photo = validateUpload({
+      filename: "factura.jpg",
+      declaredType: "image/jpeg",
+      bytes: Uint8Array.from([0xff, 0xd8, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+      size: 15 * 1024 * 1024,
+      kind: "invoice",
+      isCover: false,
+      maxBytes: 15 * 1024 * 1024,
+      imagesOnly: true,
+    });
+    expect(photo.ok).toBe(true);
+
+    const pdf = Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
+    const rejected = validateUpload({
+      filename: "factura.pdf",
+      declaredType: "application/pdf",
+      bytes: pdf,
+      size: pdf.byteLength,
+      kind: "invoice",
+      isCover: false,
+      imagesOnly: true,
+    });
+    expect(rejected.ok).toBe(false);
+  });
+
   it("rejects cover on a non-image kind", () => {
     const pdf = Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]);
     const result = validateUpload({
@@ -63,6 +90,53 @@ describe("validateUpload", () => {
       isCover: true,
     });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("propertyQuotaAllows", () => {
+  it("stops at 10 files or 120 MB for one property", () => {
+    expect(propertyQuotaAllows({ fileCount: 10, totalBytes: 0, nextSize: 1 }).ok).toBe(false);
+    expect(
+      propertyQuotaAllows({
+        fileCount: 1,
+        totalBytes: 120 * 1024 * 1024 - 5,
+        nextSize: 10,
+      }).ok,
+    ).toBe(false);
+    expect(
+      propertyQuotaAllows({
+        fileCount: 9,
+        totalBytes: 90 * 1024 * 1024,
+        nextSize: 30 * 1024 * 1024,
+      }).ok,
+    ).toBe(true);
+  });
+
+  it("accepts a 30 MB property file and rejects the next byte", () => {
+    const pdf = Uint8Array.from([
+      0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a, 0x25, 0xe2, 0xe3,
+    ]);
+    const ok = validateUpload({
+      filename: "escritura.pdf",
+      declaredType: "application/pdf",
+      bytes: pdf,
+      size: 30 * 1024 * 1024,
+      kind: "deed",
+      isCover: false,
+      maxBytes: 30 * 1024 * 1024,
+    });
+    expect(ok.ok).toBe(true);
+    const over = validateUpload({
+      filename: "escritura.pdf",
+      declaredType: "application/pdf",
+      bytes: pdf,
+      size: 30 * 1024 * 1024 + 1,
+      kind: "deed",
+      isCover: false,
+      maxBytes: 30 * 1024 * 1024,
+      oversizeError: "Cada archivo puede pesar como máximo 30 MB",
+    });
+    expect(over.ok).toBe(false);
   });
 });
 

@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Receipt, Sparkles } from "lucide-react";
 import { useApp } from "@/context";
 import { addMonths, cn, currentPeriod, formatDate, formatMoney, formatPeriod } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PaymentDialog } from "./payment-dialog";
 import type { ChargeStatus, RentCharge } from "@/types";
@@ -19,9 +19,13 @@ const STATUS_TONE: Record<ChargeStatus, string> = {
   waived: "bg-muted text-muted-foreground",
 };
 
+const CHARGE_STATUSES: ChargeStatus[] = ["open", "partial", "paid", "overdue", "waived"];
+
 export function RentPage() {
   const app = useApp();
   const [period, setPeriod] = useState<string>(currentPeriod());
+  const [propertyFilter, setPropertyFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | ChargeStatus>("all");
   const [charges, setCharges] = useState<RentCharge[]>([]);
   const [loading, setLoading] = useState(true);
   const [paymentTarget, setPaymentTarget] = useState<RentCharge | null>(null);
@@ -30,7 +34,11 @@ export function RentPage() {
   async function load() {
     try {
       setLoading(true);
-      const list = await app.listCharges(period);
+      const list = await app.listCharges({
+        period,
+        status: statusFilter === "all" ? undefined : statusFilter,
+        property_id: propertyFilter === "all" ? undefined : propertyFilter,
+      });
       setCharges(list);
     } catch (err) {
       app.setError((err as Error).message);
@@ -39,7 +47,13 @@ export function RentPage() {
     }
   }
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [period]);
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [period, propertyFilter, statusFilter]);
+
+  const properties = useMemo(
+    () => [...app.properties].sort((a, b) => a.name.localeCompare(b.name, "es")),
+    [app.properties],
+  );
+  const filtersActive = propertyFilter !== "all" || statusFilter !== "all";
 
   async function generate() {
     setGenerating(true);
@@ -92,7 +106,7 @@ export function RentPage() {
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
-          {charges.length > 0 ? (
+          {charges.length > 0 || filtersActive ? (
             <Button onClick={generate} disabled={generating}>
               <Sparkles className="h-4 w-4" /> Generar cargos
             </Button>
@@ -115,6 +129,31 @@ export function RentPage() {
           />
         </section>
 
+        <div className="flex flex-wrap gap-2">
+          <Select value={propertyFilter} onValueChange={setPropertyFilter}>
+            <SelectTrigger className="w-56" aria-label="Propiedad">
+              <SelectValue placeholder="Propiedad" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas las propiedades</SelectItem>
+              {properties.map((p) => (
+                <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as "all" | ChargeStatus)}>
+            <SelectTrigger className="w-52" aria-label="Estado">
+              <SelectValue placeholder="Estado" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todos los estados</SelectItem>
+              {CHARGE_STATUSES.map((status) => (
+                <SelectItem key={status} value={status}>{chargeStatusLabel(status)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         {loading ? (
           <Card className="divide-y divide-border overflow-hidden" role="status" aria-label="Cargando cargos">
             {[0, 1, 2, 3, 4].map((i) => (
@@ -128,13 +167,19 @@ export function RentPage() {
         ) : charges.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 px-6 py-20 text-center">
             <Receipt className="size-7 text-faint" aria-hidden />
-            <p className="font-medium">No hay cargos en {formatPeriod(period)}</p>
-            <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
-              Genera los cargos de los contratos activos de este mes.
+            <p className="font-medium">
+              {filtersActive ? "Ningún cargo coincide con este filtro" : `No hay cargos en ${formatPeriod(period)}`}
             </p>
-            <Button className="mt-2" onClick={generate} disabled={generating}>
-              <Sparkles className="size-4" /> Generar cargos
-            </Button>
+            <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
+              {filtersActive
+                ? "Prueba otra propiedad o estado, o limpia los filtros."
+                : "Genera los cargos de los contratos activos de este mes."}
+            </p>
+            {filtersActive ? null : (
+              <Button className="mt-2" onClick={generate} disabled={generating}>
+                <Sparkles className="size-4" /> Generar cargos
+              </Button>
+            )}
           </div>
         ) : (
           <Card className="overflow-hidden">

@@ -29,9 +29,16 @@ const PRIORITY: Record<string, string> = {
   low: "Baja",
 };
 
+const UNIT_STATUS: Record<string, string> = {
+  vacant: "Vacante",
+  occupied: "Ocupada",
+  turnover: "En preparación",
+  unavailable: "No disponible",
+};
+
 const LEASE_STATUS: Record<string, string> = {
   active: "Activo",
-  upcoming: "Próximo",
+  upcoming: "Borrador",
   ended: "Terminado",
   cancelled: "Cancelado",
 };
@@ -51,5 +58,6 @@ export const propertyTypeLabel = (value: string) => label(PROPERTY_TYPE, value);
 export const chargeStatusLabel = (value: string) => label(CHARGE_STATUS, value);
 export const workStatusLabel = (value: string) => label(WORK_STATUS, value);
 export const priorityLabel = (value: string) => label(PRIORITY, value);
+export const unitStatusLabel = (value: string) => label(UNIT_STATUS, value);
 export const leaseStatusLabel = (value: string) => label(LEASE_STATUS, value);
 export const roleLabel = (value: string) => label(ROLE, value);

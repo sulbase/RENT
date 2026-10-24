@@ -41,6 +41,9 @@ const viteKey =
 const lines = [
   "# Generado por pnpm run prepare:local-auth — no editar a mano si vuelves a ejecutar el script.",
   `DATABASE_URL=${quote(databaseUrl)}`,
+  // wrangler lee esta variable del entorno del proceso antes que .dev.vars.
+  // scripts/dev-api.mjs es quien la inyecta al arrancar; esta copia queda para el archivo local.
+  `CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=${quote(databaseUrl)}`,
 ];
 
 if (jwtSecret) {

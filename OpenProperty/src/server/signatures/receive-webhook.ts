@@ -50,6 +50,7 @@ type SignatureRow = {
   provider_request_id: string;
   status: SignatureState["status"];
   document_id: string | null;
+  purpose: string | null;
 };
 
 async function one<T>(sql: Sql, text: string, params: unknown[]): Promise<T | undefined> {
@@ -164,7 +165,10 @@ async function notifySignatureTransition(
             signatureId: signature.id,
             event: "signed",
             signerEmail: recipient.email,
-            detail: `${recipient.email} firmó el contrato`,
+            detail:
+              signature.purpose === "inventory"
+                ? `${recipient.email} firmó el inventario`
+                : `${recipient.email} firmó el contrato`,
           }),
         );
       }
@@ -176,7 +180,11 @@ async function notifySignatureTransition(
           organizationId: signature.organization_id,
           signatureId: signature.id,
           event: "completed",
-          detail: "Todos los firmantes completaron el contrato",
+          label: signature.purpose === "inventory" ? "inventario" : "contrato",
+          detail:
+            signature.purpose === "inventory"
+              ? "Todos los firmantes completaron el inventario"
+              : "Todos los firmantes completaron el contrato",
         }),
       );
     }
@@ -222,7 +230,7 @@ async function applyWebhookEvent(
   try {
     const signature = await one<SignatureRow>(
       handle.sql,
-      `SELECT id, organization_id, lease_id, provider_request_id, status, document_id
+      `SELECT id, organization_id, lease_id, purpose, provider_request_id, status, document_id
        FROM lease_signatures
        WHERE provider_request_id = $1`,
       [event.signingRequestId],

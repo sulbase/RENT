@@ -75,7 +75,9 @@ const MONEY_KEYS = new Set([
   "late_fee",
   "amount",
   "amount_paid",
+  "charge_amount",
   "cost",
+  "aliquot_price",
 ]);
 
 const COUNT_KEYS = new Set(["bedrooms", "bathrooms"]);

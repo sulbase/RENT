@@ -30,6 +30,10 @@ export interface Unit {
   sqft: number | null;
   market_rent: number;
   status: UnitStatus;
+  floor: number | null;
+  unit_type: string;
+  furnished: boolean;
+  aliquot_price: number;
   notes: string | null;
   created_at: string;
   // Joined
@@ -51,6 +55,12 @@ export interface Tenant {
   emergency_contact: string | null;
   employer: string | null;
   monthly_income: number | null;
+  government_id: string | null;
+  marital_status: "soltero" | "casado" | "divorciado" | "viudo" | "union_libre" | "separado" | null;
+  occupation: string | null;
+  work_address: string | null;
+  previous_address: string | null;
+  occupant_count: number | null;
   notes: string | null;
   created_at: string;
   // Joined (active lease)
@@ -83,6 +93,7 @@ export interface Lease {
   tenant_last_name?: string | null;
   tenant_email?: string | null;
   tenant_phone?: string | null;
+  tenant_government_id?: string | null;
 }
 
 export type ChargeStatus = "open" | "partial" | "paid" | "overdue" | "waived";
@@ -120,6 +131,21 @@ export interface Payment {
   method: PaymentMethod;
   reference: string | null;
   notes: string | null;
+  voided_at?: string | null;
+  void_reason?: string | null;
+  voided_by?: string | null;
+}
+
+/** Pago leído desde el inquilino titular del contrato. El registro sigue en el cargo. */
+export interface TenantPayment extends Payment {
+  period: string;
+  due_date: string;
+  charge_amount: number;
+  charge_status: ChargeStatus;
+  lease_id: string;
+  lease_status: LeaseStatus;
+  unit_name: string | null;
+  property_name: string | null;
 }
 
 export type VendorCategory = "plumber" | "electrician" | "hvac" | "handyman" | "cleaning" | "landscaping" | "general";
@@ -213,19 +239,30 @@ export interface DashboardSummary {
 export type NewProperty = Partial<Omit<Property, "id" | "created_at" | "unit_count" | "occupied_count">> & { name: string };
 export type NewUnit = Partial<Omit<Unit, "id" | "created_at" | "property_name" | "property_color" | "property_address" | "property_city" | "active_lease_id" | "active_tenant_name">> & { property_id: string; name: string };
 export type NewTenant = Partial<Omit<Tenant, "id" | "created_at" | "active_unit_id" | "active_unit_name" | "active_property_name">> & { first_name: string; last_name: string };
-export type NewLease = Partial<Omit<Lease, "id" | "created_at" | "unit_name" | "property_id" | "property_name" | "property_color" | "tenant_first_name" | "tenant_last_name" | "tenant_email" | "tenant_phone">> & { unit_id: string; start_date: string; end_date: string };
+export type NewLease = Partial<Omit<Lease, "id" | "created_at" | "unit_name" | "property_id" | "property_name" | "property_color" | "tenant_first_name" | "tenant_last_name" | "tenant_email" | "tenant_phone" | "tenant_government_id">> & { unit_id: string; start_date: string; end_date: string };
 export type NewWorkOrder = Partial<Omit<WorkOrder, "id" | "created_at" | "property_name" | "property_color" | "unit_name" | "tenant_first_name" | "tenant_last_name" | "vendor_name" | "vendor_color">> & { title: string };
 export type NewVendor = Partial<Omit<Vendor, "id" | "created_at">> & { name: string };
 export type NewApplication = Partial<Omit<Application, "id" | "created_at" | "unit_name" | "property_name">> & { first_name: string; last_name: string };
 
 export type DocumentEntityType = "property" | "unit" | "lease" | "tenant" | "work_order";
-export type DocumentKind = "image" | "deed" | "certificate" | "invoice" | "signed_lease" | "other";
+export type DocumentKind =
+  | "image"
+  | "deed"
+  | "certificate"
+  | "invoice"
+  | "signed_lease"
+  | "inventory"
+  | "signed_inventory"
+  | "other";
+
+export type SignaturePurpose = "lease" | "inventory";
 
 export interface PropertyDocument {
   id: string;
   entity_type: DocumentEntityType;
   entity_id: string;
   kind: DocumentKind;
+  label?: string | null;
   filename: string;
   mime: string;
   size_bytes: number;
@@ -260,6 +297,7 @@ export interface LeaseSignature {
   provider: string;
   provider_request_id: string | null;
   status: LeaseSignatureStatus;
+  purpose: SignaturePurpose;
   document_id: string | null;
   source_document_id: string | null;
   last_error: string | null;

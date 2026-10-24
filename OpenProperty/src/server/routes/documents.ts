@@ -2,14 +2,23 @@ import { z } from "zod";
 import type { Context, Hono } from "hono";
 import type { AppEnv } from "../env";
 import {
+  LEASE_ATTACHMENT_KINDS_KEY,
+  MAX_LEASE_PHOTO_BYTES,
+  parseLeaseAttachmentKinds,
+} from "../documents/lease-attachments";
+import {
   buildObjectKey,
   contentDisposition,
   DOCUMENT_ENTITY_TYPES,
   DOCUMENT_KINDS,
-  MAX_UPLOAD_REQUEST_BYTES,
+  MAX_ENTITY_IMAGE_PHOTOS,
+  MAX_PROPERTY_FILE_BYTES,
+  PROPERTY_FILE_TOO_LARGE,
   orgQuotaAllows,
+  propertyQuotaAllows,
   validateUpload,
   type DocumentEntityType,
+  type DocumentKind,
 } from "../documents/policy";
 import { deleteR2Keys, entityInOrg } from "../documents/storage";
 import { get, normalizeRow, normalizeRows, orgId, query } from "../pg";
@@ -29,7 +38,9 @@ const UploadFields = z.object({
   is_cover: z.enum(["true", "false", "1", "0"]).optional(),
 });
 
-const PUBLIC_COLUMNS = `id, entity_type, entity_id, kind, filename, mime, size_bytes, uploaded_by, is_cover, created_at`;
+const PUBLIC_COLUMNS = `id, entity_type, entity_id, kind, label, filename, mime, size_bytes, uploaded_by, is_cover, created_at`;
+const LEASE_UPLOAD_KINDS = new Set<DocumentKind>(["image", "invoice", "other", "inventory"]);
+const REQUEST_CAP_BYTES = MAX_PROPERTY_FILE_BYTES + 1024 * 1024;
 
 function targetIds(entityType: DocumentEntityType, entityId: string) {
   return {
@@ -44,6 +55,45 @@ function targetIds(entityType: DocumentEntityType, entityId: string) {
 
 function formText(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+async function leaseAttachmentKinds(c: Context<AppEnv>): Promise<string[]> {
+  const row = await get<{ value: string }>(
+    c,
+    `SELECT value FROM settings WHERE organization_id = $1 AND key = $2`,
+    [orgId(c), LEASE_ATTACHMENT_KINDS_KEY],
+  );
+  return parseLeaseAttachmentKinds(row?.value);
+}
+
+async function entityImageCount(
+  c: Context<AppEnv>,
+  entityType: "lease" | "unit",
+  entityId: string,
+): Promise<number> {
+  const row = await get<{ photo_count: number | string }>(
+    c,
+    `SELECT COUNT(*)::int AS photo_count
+     FROM documents
+     WHERE organization_id = $1 AND entity_type = $2 AND entity_id = $3
+       AND deleted_at IS NULL AND mime LIKE 'image/%'`,
+    [orgId(c), entityType, entityId],
+  );
+  return Number(row?.photo_count ?? 0);
+}
+
+async function propertyFolderUsage(c: Context<AppEnv>, entityId: string) {
+  const row = await get<{ folder_count: number | string; folder_bytes: number | string }>(
+    c,
+    `SELECT COUNT(*)::int AS folder_count, COALESCE(SUM(size_bytes), 0)::bigint AS folder_bytes
+     FROM documents
+     WHERE organization_id = $1 AND entity_type = 'property' AND entity_id = $2 AND deleted_at IS NULL`,
+    [orgId(c), entityId],
+  );
+  return {
+    file_count: Number(row?.folder_count ?? 0),
+    total_bytes: Number(row?.folder_bytes ?? 0),
+  };
 }
 
 async function usage(c: Context<AppEnv>) {
@@ -121,8 +171,8 @@ export function mountDocumentsRoutes(app: Hono<AppEnv>) {
     if (!bucket) return c.json({ error: "File storage is not configured" }, 503);
 
     const declaredLength = Number(c.req.header("content-length") ?? "0");
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_UPLOAD_REQUEST_BYTES) {
-      return c.json({ error: "File exceeds 10 MB" }, 413);
+    if (Number.isFinite(declaredLength) && declaredLength > REQUEST_CAP_BYTES) {
+      return c.json({ error: PROPERTY_FILE_TOO_LARGE }, 413);
     }
 
     const body = await c.req.parseBody();
@@ -141,6 +191,35 @@ export function mountDocumentsRoutes(app: Hono<AppEnv>) {
     if (isCover && fields.data.entity_type === "message") {
       return c.json({ error: "Messages cannot have a cover image" }, 400);
     }
+    const leaseUpload = fields.data.entity_type === "lease";
+    const unitUpload = fields.data.entity_type === "unit";
+    const propertyUpload = fields.data.entity_type === "property";
+    const label = formText(body.label).trim().replace(/\s+/g, " ");
+    if (unitUpload && fields.data.kind !== "image") {
+      return c.json({ error: "En la unidad solo se admiten fotografías" }, 400);
+    }
+    if (leaseUpload && !LEASE_UPLOAD_KINDS.has(fields.data.kind)) {
+      return c.json(
+        {
+          error:
+            "En el contrato solo se admiten fotografías, facturas, un PDF de contrato o el inventario",
+        },
+        400,
+      );
+    }
+    const leaseInventoryPdf = leaseUpload && fields.data.kind === "inventory";
+    const leaseContractPdf = leaseUpload && fields.data.kind === "other" && !label;
+    const leaseSigningPdf = leaseInventoryPdf || leaseContractPdf;
+    let storedLabel: string | null = null;
+    if (leaseUpload && fields.data.kind === "other" && label) {
+      const kinds = await leaseAttachmentKinds(c);
+      if (!kinds.includes(label)) {
+        return c.json({ error: "Esa opción no pertenece a la organización" }, 400);
+      }
+      storedLabel = label;
+    } else if (label && !leaseSigningPdf) {
+      return c.json({ error: "Invalid upload" }, 400);
+    }
     const bytes = new Uint8Array(await file.arrayBuffer());
     const checked = validateUpload({
       filename: file.name,
@@ -149,14 +228,65 @@ export function mountDocumentsRoutes(app: Hono<AppEnv>) {
       size: file.size,
       kind: fields.data.kind,
       isCover,
+      maxBytes: propertyUpload
+        ? MAX_PROPERTY_FILE_BYTES
+        : leaseUpload && !leaseSigningPdf
+          ? MAX_LEASE_PHOTO_BYTES
+          : undefined,
+      oversizeError: propertyUpload
+        ? PROPERTY_FILE_TOO_LARGE
+        : leaseUpload && !leaseSigningPdf
+          ? "Cada fotografía puede pesar como máximo 15 MB"
+          : undefined,
+      imagesOnly: (leaseUpload && !leaseSigningPdf) || unitUpload,
+      imagesOnlyError: leaseUpload
+        ? "En el contrato solo se admiten imágenes JPEG, PNG, WebP o GIF"
+        : unitUpload
+          ? "En la unidad solo se admiten imágenes JPEG, PNG, WebP o GIF"
+          : undefined,
     });
     if (!checked.ok) {
-      const status = checked.error === "File exceeds 10 MB" ? 413 : 400;
+      const status =
+        checked.error.includes("30 MB") ||
+        checked.error.includes("15 MB") ||
+        checked.error === "File exceeds 10 MB"
+          ? 413
+          : 400;
       return c.json({ error: checked.error }, status);
+    }
+    if (leaseSigningPdf && checked.mime !== "application/pdf") {
+      return c.json({ error: "El archivo debe ser un PDF" }, 400);
     }
 
     if (!(await entityInOrg(c, fields.data.entity_type, fields.data.entity_id))) {
       return c.json({ error: "Not found" }, 404);
+    }
+    const imageUpload = checked.mime.startsWith("image/");
+    const cappedPhotos = fields.data.entity_type === "lease" || fields.data.entity_type === "unit";
+    if (
+      cappedPhotos &&
+      imageUpload &&
+      (await entityImageCount(
+        c,
+        fields.data.entity_type as "lease" | "unit",
+        fields.data.entity_id,
+      )) >= MAX_ENTITY_IMAGE_PHOTOS
+    ) {
+      const error =
+        fields.data.entity_type === "lease"
+          ? "Este contrato ya tiene 25 fotografías"
+          : "Esta unidad ya tiene 25 fotografías";
+      return c.json({ error }, 409);
+    }
+
+    if (propertyUpload) {
+      const folder = await propertyFolderUsage(c, fields.data.entity_id);
+      const folderAllowed = propertyQuotaAllows({
+        fileCount: folder.file_count,
+        totalBytes: folder.total_bytes,
+        nextSize: file.size,
+      });
+      if (!folderAllowed.ok) return c.json({ error: folderAllowed.error }, 409);
     }
 
     const quota = await usage(c);
@@ -194,11 +324,11 @@ export function mountDocumentsRoutes(app: Hono<AppEnv>) {
         `INSERT INTO documents (
            id, organization_id, entity_type, entity_id,
            property_id, unit_id, lease_id, tenant_id, work_order_id, message_id,
-           kind, r2_key, filename, mime, size_bytes, uploaded_by, is_cover
+           kind, r2_key, filename, mime, size_bytes, uploaded_by, is_cover, label
          ) VALUES (
            $1, $2, $3, $4,
            $5, $6, $7, $8, $9, $10,
-           $11, $12, $13, $14, $15, $16, $17
+           $11, $12, $13, $14, $15, $16, $17, $18
          ) RETURNING ${PUBLIC_COLUMNS}`,
         [
           documentId,
@@ -218,6 +348,7 @@ export function mountDocumentsRoutes(app: Hono<AppEnv>) {
           file.size,
           c.get("userId"),
           isCover,
+          storedLabel,
         ],
       );
       if (!row) {

@@ -53,10 +53,13 @@ enabled = true
 [observability.logs]
 enabled = true
 
-# Opcional en producción: crea Hyperdrive apuntando al pooler de Supabase y descomenta.
-# [[hyperdrive]]
-# binding = "HYPERDRIVE"
-# id = "<hyperdrive-config-id>"
+# Producción: Hyperdrive rent-supabase → pooler 6543, caché de consultas desactivada.
+# El string de conexión no va en el repo. En local, scripts/dev-api.mjs inyecta
+# CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE desde DATABASE_POOLED_URL
+# (wrangler lo exige en el entorno del proceso, antes de leer .dev.vars).
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "6a5f5c4f4d9945a78312490ab24c881a"
 
 # Bucket privado. `wrangler dev` simula el binding en local (preview_bucket_name).
 # Crear antes del deploy: `wrangler r2 bucket create rent-files` y `wrangler r2 bucket create rent-files-dev`.
