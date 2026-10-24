@@ -16,6 +16,7 @@ const LEGACY_ROOTS = new Set([
   "messages",
   "vendors",
   "settings",
+  "portal",
 ]);
 
 export function withAppPath(urlOrOrigin: string): string {

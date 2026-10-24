@@ -22,6 +22,14 @@ export type MembershipInfo = {
   role: string;
 };
 
+/** The tenant record this account opens in the portal. */
+export type PortalInfo = {
+  tenant_id: string;
+  organization_id: string;
+  organization_name: string;
+  display_name: string;
+};
+
 type AuthState = {
   loading: boolean;
   session: Session | null;
@@ -29,6 +37,7 @@ type AuthState = {
   memberships: MembershipInfo[];
   organizationId: string | null;
   role: string | null;
+  portal: PortalInfo | null;
   /** Set when /api/me fails. Distinct from having no membership. */
   profileError: string | null;
   /** True while /api/me is in flight. Empty organizationId during this window is not onboarding. */
@@ -56,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [memberships, setMemberships] = useState<MembershipInfo[]>([]);
   const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [portal, setPortal] = useState<PortalInfo | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profilePending, setProfilePending] = useState(false);
   const [devBypass, setDevBypass] = useState(!authConfigured);
@@ -87,6 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setMemberships([]);
       setOrganizationId(null);
       setRole(null);
+      setPortal(null);
       setProfileError(null);
       setProfilePending(false);
       setLoading(false);
@@ -101,6 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         memberships: MembershipInfo[];
         organization_id: string | null;
         role: string | null;
+        portal?: PortalInfo | null;
       }>("GET", "/api/me", undefined, {
         accessToken: current.access_token,
         organizationId: storedOrg,
@@ -113,11 +125,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setOrganizationId(me.organization_id);
         setRole(me.role);
         setMemberships([]);
+        setPortal(null);
         return;
       }
 
       setDevBypass(false);
       setProfileError(null);
+      setPortal(me.portal ?? null);
       const list = me.memberships ?? [];
       setMemberships(list);
 
@@ -198,6 +212,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setMemberships([]);
     setOrganizationId(null);
     setRole(null);
+    setPortal(null);
   }, []);
 
   const signOut = useCallback(async () => {
@@ -300,6 +315,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       memberships,
       organizationId,
       role,
+      portal,
       profileError,
       profilePending,
       devBypass,
@@ -322,6 +338,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       memberships,
       organizationId,
       role,
+      portal,
       profileError,
       profilePending,
       devBypass,

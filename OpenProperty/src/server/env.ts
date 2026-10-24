@@ -30,6 +30,8 @@ export type WorkerVariables = {
   userId: string | null;
   userEmail: string | null;
   role: MembershipRole;
+  /** Set only on `/api/portal/*`, resolved from `tenants.user_id`. */
+  portalTenantId: string | null;
 };
 
 declare module "hono" {

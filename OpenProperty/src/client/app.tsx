@@ -20,6 +20,7 @@ import { AuthProvider, useAuth } from "./hooks/use-auth";
 import { LoginPage } from "./components/auth/login-page";
 import { NewPasswordPage } from "./components/auth/new-password-page";
 import { OrgGatePage } from "./components/auth/org-gate-page";
+import { PortalShell } from "./components/portal/portal-shell";
 import { Button } from "./components/ui/button";
 import { toAppHref } from "../shared/public-site";
 import { resolveAuthScreen } from "./lib/auth-gate";
@@ -73,6 +74,7 @@ function AppRoot() {
       devBypass: auth.devBypass,
       organizationId: auth.organizationId,
       profileError: auth.profileError,
+      portal: Boolean(auth.portal),
     });
     if (screen === "loading") {
       return (
@@ -86,6 +88,9 @@ function AppRoot() {
     }
     if (screen === "login") {
       return <LoginPage />;
+    }
+    if (screen === "portal") {
+      return <PortalShell />;
     }
     if (screen === "profile-error" || screen === "org-gate") {
       if (screen === "profile-error") {

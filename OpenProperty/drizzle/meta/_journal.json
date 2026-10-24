@@ -85,6 +85,13 @@
       "when": 1790483377184,
       "tag": "0011_payment_void",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792870625201,
+      "tag": "0012_tenant_portal",
+      "breakpoints": true
     }
   ]
 }
