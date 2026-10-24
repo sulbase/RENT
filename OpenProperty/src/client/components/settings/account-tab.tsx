@@ -1,4 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
+import { useApp } from "@/context";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -11,10 +13,12 @@ export function AccountTab() {
   const metadata = user?.user_metadata as { display_name?: string } | undefined;
   const [name, setName] = useState(metadata?.display_name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [feedbackKey, setFeedbackKey] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   if (!user) {
@@ -28,6 +32,7 @@ export function AccountTab() {
   async function run(key: string, action: () => Promise<void>, ok: string) {
     setError(null);
     setNotice(null);
+    setFeedbackKey(key);
     setBusy(key);
     try {
       await action();
@@ -60,6 +65,8 @@ export function AccountTab() {
           </Button>
         </div>
       </Card>
+
+      <LandlordCard />
 
       <Card className="p-6">
         <h2 className="mb-1 text-sm font-semibold">Correo</h2>
@@ -96,42 +103,49 @@ export function AccountTab() {
       <Card className="p-6">
         <h2 className="mb-1 text-sm font-semibold">Contraseña</h2>
         <p className="mb-4 text-xs text-muted-foreground">Mínimo 6 caracteres.</p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <Label htmlFor="account-password">Contraseña nueva</Label>
-            <Input
-              id="account-password"
-              type="password"
-              autoComplete="new-password"
-              minLength={6}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label htmlFor="account-password-2">Confirmar</Label>
-            <Input
-              id="account-password-2"
-              type="password"
-              autoComplete="new-password"
-              minLength={6}
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-            />
-          </div>
+        <div className="grid max-w-md gap-3">
+          <PasswordField
+            id="account-password-current"
+            label="Contraseña actual"
+            autoComplete="current-password"
+            value={currentPassword}
+            onChange={setCurrentPassword}
+          />
+          <PasswordField
+            id="account-password"
+            label="Contraseña nueva"
+            autoComplete="new-password"
+            value={password}
+            onChange={setPassword}
+          />
+          <PasswordField
+            id="account-password-2"
+            label="Confirmar contraseña"
+            autoComplete="new-password"
+            value={confirm}
+            onChange={setConfirm}
+          />
         </div>
         <div className="mt-4">
           <Button
             type="button"
-            disabled={busy !== null || password.length < 6}
+            disabled={busy !== null || currentPassword.length === 0 || password.length < 6}
             onClick={() => {
               if (password !== confirm) {
+                setFeedbackKey("password");
                 setNotice(null);
                 setError("Las contraseñas no coinciden.");
                 return;
               }
+              if (password === currentPassword) {
+                setFeedbackKey("password");
+                setNotice(null);
+                setError("La contraseña nueva debe ser distinta de la actual.");
+                return;
+              }
               void run("password", async () => {
-                await auth.updatePassword(password);
+                await auth.updatePassword(password, currentPassword);
+                setCurrentPassword("");
                 setPassword("");
                 setConfirm("");
               }, "Contraseña actualizada.");
@@ -139,6 +153,11 @@ export function AccountTab() {
           >
             {busy === "password" ? "Guardando…" : "Cambiar contraseña"}
           </Button>
+          {feedbackKey === "password" && (notice || error) ? (
+            <p className={error ? "mt-3 text-sm text-destructive" : "mt-3 text-sm text-muted-foreground"} role="alert">
+              {error ?? notice}
+            </p>
+          ) : null}
         </div>
       </Card>
 
@@ -152,8 +171,146 @@ export function AccountTab() {
         </Button>
       </Card>
 
-      {notice && <p className="text-sm text-muted-foreground">{notice}</p>}
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {feedbackKey !== "password" && notice ? <p className="text-sm text-muted-foreground">{notice}</p> : null}
+      {feedbackKey !== "password" && error ? <p className="text-sm text-destructive" role="alert">{error}</p> : null}
+    </div>
+  );
+}
+
+function LandlordCard() {
+  const app = useApp();
+  const { role } = useAuth();
+  const canEdit = role === "owner" || role === "manager";
+  const [firstName, setFirstName] = useState(app.settings.landlord_first_name);
+  const [lastName, setLastName] = useState(app.settings.landlord_last_name);
+  const [email, setEmail] = useState(app.settings.landlord_email);
+  const [governmentId, setGovernmentId] = useState(app.settings.landlord_government_id);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFirstName(app.settings.landlord_first_name);
+    setLastName(app.settings.landlord_last_name);
+    setEmail(app.settings.landlord_email);
+    setGovernmentId(app.settings.landlord_government_id);
+  }, [app.settings]);
+
+  async function save() {
+    setSaving(true);
+    setNotice(null);
+    try {
+      await app.updateSettings({
+        landlord_first_name: firstName.trim(),
+        landlord_last_name: lastName.trim(),
+        landlord_email: email.trim(),
+        landlord_government_id: governmentId.trim(),
+      });
+      setNotice("Arrendador actualizado. Estos datos se usan al enviar un contrato a firma.");
+    } catch (err) {
+      app.setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card className="p-6">
+      <h2 className="mb-1 text-sm font-semibold">Arrendador</h2>
+      <p className="mb-4 text-xs text-muted-foreground">
+        Nombre, correo y documento de identidad de quien firma los contratos.
+      </p>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div>
+          <Label htmlFor="landlord-first">Nombre</Label>
+          <Input
+            id="landlord-first"
+            value={firstName}
+            maxLength={80}
+            onChange={(e) => setFirstName(e.target.value)}
+            disabled={!canEdit}
+          />
+        </div>
+        <div>
+          <Label htmlFor="landlord-last">Apellido</Label>
+          <Input
+            id="landlord-last"
+            value={lastName}
+            maxLength={80}
+            onChange={(e) => setLastName(e.target.value)}
+            disabled={!canEdit}
+          />
+        </div>
+        <div>
+          <Label htmlFor="landlord-email">Correo</Label>
+          <Input
+            id="landlord-email"
+            type="email"
+            value={email}
+            maxLength={200}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={!canEdit}
+          />
+        </div>
+        <div>
+          <Label htmlFor="landlord-id">Documento de identidad</Label>
+          <Input
+            id="landlord-id"
+            value={governmentId}
+            maxLength={18}
+            onChange={(e) => setGovernmentId(e.target.value)}
+            disabled={!canEdit}
+          />
+        </div>
+      </div>
+      {canEdit && (
+        <div className="mt-4">
+          <Button type="button" onClick={() => void save()} disabled={saving}>
+            {saving ? "Guardando…" : "Guardar arrendador"}
+          </Button>
+        </div>
+      )}
+      {notice && <p className="mt-3 text-sm text-muted-foreground">{notice}</p>}
+    </Card>
+  );
+}
+
+function PasswordField({
+  id,
+  label,
+  autoComplete,
+  value,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  autoComplete: "current-password" | "new-password";
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div>
+      <Label htmlFor={id}>{label}</Label>
+      <div className="relative">
+        <Input
+          id={id}
+          type={visible ? "text" : "password"}
+          autoComplete={autoComplete}
+          minLength={autoComplete === "new-password" ? 6 : undefined}
+          className="pr-9"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <button
+          type="button"
+          className="absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground hover:text-foreground"
+          aria-label={visible ? `Ocultar ${label.toLowerCase()}` : `Mostrar ${label.toLowerCase()}`}
+          aria-pressed={visible}
+          onClick={() => setVisible((current) => !current)}
+        >
+          {visible ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
+        </button>
+      </div>
     </div>
   );
 }

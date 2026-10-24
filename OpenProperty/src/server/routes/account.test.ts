@@ -78,4 +78,19 @@ describe("organization settings", () => {
       expect(normalized.entries).toContainEqual(["area_unit", "m2"]);
     }
   });
+
+  it("stores the landlord used on lease signatures", () => {
+    const parsed = settingsPatchSchema.parse({
+      landlord_first_name: "Ana",
+      landlord_last_name: "Lopez",
+      landlord_email: "Ana@Example.com",
+      landlord_government_id: "LOPA800101HDFXXX01",
+    });
+    const normalized = normalizeSettingEntries(parsed);
+    expect(normalized.ok).toBe(true);
+    if (normalized.ok) {
+      expect(normalized.entries).toContainEqual(["landlord_email", "ana@example.com"]);
+      expect(normalized.entries).toContainEqual(["landlord_government_id", "LOPA800101HDFXXX01"]);
+    }
+  });
 });

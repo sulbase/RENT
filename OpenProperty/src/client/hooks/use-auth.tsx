@@ -31,6 +31,8 @@ type AuthState = {
   role: string | null;
   /** Set when /api/me fails. Distinct from having no membership. */
   profileError: string | null;
+  /** True while /api/me is in flight. Empty organizationId during this window is not onboarding. */
+  profilePending: boolean;
   devBypass: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
@@ -38,7 +40,7 @@ type AuthState = {
   signOutEverywhere: () => Promise<void>;
   needsNewPassword: boolean;
   requestPasswordReset: (email: string) => Promise<void>;
-  updatePassword: (password: string) => Promise<void>;
+  updatePassword: (password: string, currentPassword?: string) => Promise<void>;
   updateEmail: (email: string) => Promise<void>;
   updateDisplayName: (name: string) => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -55,6 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [profilePending, setProfilePending] = useState(false);
   const [devBypass, setDevBypass] = useState(!authConfigured);
   const [needsNewPassword, setNeedsNewPassword] = useState(false);
   const profileRequest = useRef(0);
@@ -62,11 +65,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshProfile = useCallback(async (knownSession?: Session | null) => {
     if (!authConfigured) {
       setDevBypass(true);
+      setProfilePending(false);
       setLoading(false);
       return;
     }
     const supabase = getSupabase();
-    if (!supabase) return;
+    if (!supabase) {
+      setProfilePending(false);
+      setLoading(false);
+      return;
+    }
 
     const requestId = ++profileRequest.current;
     const current =
@@ -80,10 +88,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setOrganizationId(null);
       setRole(null);
       setProfileError(null);
+      setProfilePending(false);
       setLoading(false);
       return;
     }
 
+    setProfilePending(true);
     const storedOrg = getStoredOrganizationId();
     try {
       const me = await api<{
@@ -126,7 +136,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (requestId !== profileRequest.current) return;
       setProfileError(err instanceof Error ? err.message : "No se pudo cargar la sesión");
     } finally {
-      if (requestId === profileRequest.current) setLoading(false);
+      if (requestId === profileRequest.current) {
+        setProfilePending(false);
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -208,9 +221,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error;
   }, []);
 
-  const updatePassword = useCallback(async (password: string) => {
+  const updatePassword = useCallback(async (password: string, currentPassword?: string) => {
     const supabase = getSupabase();
     if (!supabase) throw new Error("Auth not configured");
+    if (currentPassword !== undefined) {
+      const { data, error: userError } = await supabase.auth.getUser();
+      const email = data.user?.email;
+      if (userError || !email) throw new Error("No hay una sesión activa.");
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password: currentPassword,
+      });
+      if (signInError) throw new Error("La contraseña actual no es correcta.");
+    }
     const { error } = await supabase.auth.updateUser({ password });
     if (error) throw error;
     setNeedsNewPassword(false);
@@ -278,6 +301,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       organizationId,
       role,
       profileError,
+      profilePending,
       devBypass,
       signIn,
       signUp,
@@ -299,6 +323,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       organizationId,
       role,
       profileError,
+      profilePending,
       devBypass,
       signIn,
       signUp,

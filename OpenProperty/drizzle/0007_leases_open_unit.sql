@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "uq_leases_open_unit" ON "leases" USING btree ("organization_id","unit_id") WHERE "leases"."status" in ('upcoming', 'active');

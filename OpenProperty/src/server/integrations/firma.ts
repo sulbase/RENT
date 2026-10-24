@@ -91,6 +91,30 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+/** Letter-size layout used by `buildLeaseSummaryPdf` (612×792 pt). */
+const LEASE_PAGE_WIDTH_PT = 612;
+const LEASE_PAGE_HEIGHT_PT = 792;
+
+/** firma.dev expects top-left percentages (0–100); x + width and y + height must fit on the page. */
+export function signatureFieldLayout(index: number): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} {
+  const xPt = 72 + (index % 2) * 250;
+  const yBasePt = 640 - Math.floor(index / 2) * 80;
+  const widthPt = 200;
+  const heightPt = 48;
+  const toPct = (value: number, page: number) =>
+    Math.min(100, Math.max(0, Math.round((value / page) * 1000) / 10));
+  const x = toPct(xPt, LEASE_PAGE_WIDTH_PT);
+  const width = toPct(widthPt, LEASE_PAGE_WIDTH_PT);
+  const height = toPct(heightPt, LEASE_PAGE_HEIGHT_PT);
+  const y = toPct(LEASE_PAGE_HEIGHT_PT - yBasePt - heightPt, LEASE_PAGE_HEIGHT_PT);
+  return { x, y, width, height };
+}
+
 export function createFirmaClient(deps: FirmaDeps) {
   return {
     async createAndSend(input: {
@@ -118,16 +142,19 @@ export function createFirmaClient(deps: FirmaDeps) {
             designation: "Signer",
             order: recipient.order,
           })),
-          fields: input.recipients.map((recipient, index) => ({
-            recipient_id: recipient.id,
-            type: "signature",
-            page: 1,
-            x: 72 + (index % 2) * 250,
-            y: 640 - Math.floor(index / 2) * 80,
-            width: 200,
-            height: 48,
-            required: true,
-          })),
+          fields: input.recipients.map((recipient, index) => {
+            const layout = signatureFieldLayout(index);
+            return {
+              recipient_id: recipient.id,
+              type: "signature",
+              page: 1,
+              x: layout.x,
+              y: layout.y,
+              width: layout.width,
+              height: layout.height,
+              required: true,
+            };
+          }),
           settings: {
             use_signing_order: input.recipients.length > 1,
             send_signing_email: true,

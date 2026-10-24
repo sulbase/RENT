@@ -14,6 +14,7 @@ import { RentPage } from "./components/rent/rent-page";
 import { MaintenancePage } from "./components/maintenance/maintenance-page";
 import { MessagesPage } from "./components/messages/messages-page";
 import { SettingsPage } from "./components/settings/settings-page";
+import { VendorsPage } from "./components/vendors/vendors-page";
 import { authConfigured } from "./lib/supabase";
 import { AuthProvider, useAuth } from "./hooks/use-auth";
 import { LoginPage } from "./components/auth/login-page";
@@ -21,6 +22,7 @@ import { NewPasswordPage } from "./components/auth/new-password-page";
 import { OrgGatePage } from "./components/auth/org-gate-page";
 import { Button } from "./components/ui/button";
 import { toAppHref } from "../shared/public-site";
+import { resolveAuthScreen } from "./lib/auth-gate";
 import { roleLabel } from "./lib/labels";
 
 const PORTFOLIO: AppNavItem[] = [
@@ -35,6 +37,7 @@ const OPERATIONS: AppNavItem[] = [
   { id: "messages", label: "Correo", href: toAppHref("/messages"), icon: "mail", color: "blue" },
 ];
 const ADMIN: AppNavItem[] = [
+  { id: "vendors", label: "Proveedores", href: toAppHref("/vendors"), icon: "truck", color: "sky" },
   { id: "settings", label: "Ajustes", href: toAppHref("/settings"), icon: "settings" },
 ];
 
@@ -62,21 +65,30 @@ function AppRoot() {
   const auth = useAuth();
 
   if (authConfigured) {
-    if (auth.loading) {
+    const screen = resolveAuthScreen({
+      loading: auth.loading,
+      profilePending: auth.profilePending,
+      needsNewPassword: auth.needsNewPassword,
+      session: Boolean(auth.session),
+      devBypass: auth.devBypass,
+      organizationId: auth.organizationId,
+      profileError: auth.profileError,
+    });
+    if (screen === "loading") {
       return (
         <div className="flex min-h-screen items-center justify-center text-muted-foreground">
           Cargando…
         </div>
       );
     }
-    if (auth.needsNewPassword && auth.session) {
+    if (screen === "password") {
       return <NewPasswordPage />;
     }
-    if (!auth.session && !auth.devBypass) {
+    if (screen === "login") {
       return <LoginPage />;
     }
-    if (auth.session && !auth.devBypass && !auth.organizationId) {
-      if (auth.profileError) {
+    if (screen === "profile-error" || screen === "org-gate") {
+      if (screen === "profile-error") {
         return (
           <div className="flex min-h-screen items-center justify-center bg-background p-6">
             <div className="w-full max-w-sm space-y-4 rounded-xl border border-border bg-card p-8">
@@ -153,6 +165,7 @@ function AuthenticatedShell() {
               {route.name === "rent" && <RentPage />}
               {route.name === "maintenance" && <MaintenancePage />}
               {route.name === "messages" && <MessagesPage />}
+              {route.name === "vendors" && <VendorsPage />}
               {route.name === "settings" && <SettingsPage />}
               {route.name === "not-found" && (
                 <Placeholder title="No encontrada" message="Esa página no existe." />

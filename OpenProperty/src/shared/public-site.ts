@@ -14,6 +14,7 @@ const LEGACY_ROOTS = new Set([
   "rent",
   "maintenance",
   "messages",
+  "vendors",
   "settings",
 ]);
 

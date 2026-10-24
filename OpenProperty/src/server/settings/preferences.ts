@@ -71,6 +71,26 @@ function normalizeSetting(
       if (text !== "m2" && text !== "ft2")
         return { ok: false, error: "area_unit must be m2 or ft2" };
       return { ok: true, value: text };
+    case "landlord_first_name":
+    case "landlord_last_name":
+      if (text.length > 80)
+        return { ok: false, error: "El nombre del arrendador es demasiado largo" };
+      return { ok: true, value: text };
+    case "landlord_email":
+      if (!text) return { ok: true, value: "" };
+      if (text.length > 200 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) {
+        return { ok: false, error: "El correo del arrendador no es válido" };
+      }
+      return { ok: true, value: text.toLowerCase() };
+    case "landlord_government_id":
+      if (!text) return { ok: true, value: "" };
+      if (text.length > 18) {
+        return {
+          ok: false,
+          error: "El documento de identidad del arrendador admite hasta 18 caracteres",
+        };
+      }
+      return { ok: true, value: text };
     default:
       return { ok: false, error: `Unknown setting ${key}` };
   }

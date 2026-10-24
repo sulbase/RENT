@@ -72,7 +72,7 @@ export function LeasesPage({ navigate }: { navigate: (to: string) => void }) {
           <Tabs value={filter} onValueChange={(v) => setFilter(v as LeaseStatus | "all")}>
             <TabsList>
               <TabsTrigger value="active">Activos</TabsTrigger>
-              <TabsTrigger value="upcoming">Próximos</TabsTrigger>
+              <TabsTrigger value="upcoming">Borradores</TabsTrigger>
               <TabsTrigger value="ended">Terminados</TabsTrigger>
               <TabsTrigger value="all">Todos</TabsTrigger>
             </TabsList>

@@ -64,6 +64,20 @@ describe("lease signature org isolation", () => {
     expect(res.status).toBe(404);
   });
 
+  it("rejects an inventory signature that has no uploaded PDF", async () => {
+    const res = await signatureApp(ORG_B).request(`/api/leases/${LEASE_B}/signature`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        purpose: "inventory",
+        recipients: [
+          { first_name: "Ana", last_name: "Lopez", email: "ana@example.com", role: "tenant" },
+        ],
+      }),
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("returns an empty list for the owning organization", async () => {
     const res = await signatureApp(ORG_B).request(`/api/leases/${LEASE_B}/signature`);
     expect(res.status).toBe(200);

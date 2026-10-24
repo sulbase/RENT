@@ -10,7 +10,10 @@ import { parseJson } from "../validation";
 
 const OPEN_STATUSES = "('draft', 'sent', 'viewed', 'partially_signed')";
 
+const Purpose = z.enum(["lease", "inventory"]);
+
 const CreateBody = z.object({
+  purpose: Purpose.default("lease"),
   document_id: z.string().uuid().optional(),
   recipients: z
     .array(
@@ -37,6 +40,9 @@ type LeaseRow = {
   monthly_rent: string;
   unit_name: string | null;
   property_name: string | null;
+  tenant_first_name: string | null;
+  tenant_last_name: string | null;
+  tenant_government_id: string | null;
 };
 
 function firmaFor(c: Context<AppEnv>, override?: FirmaClient): FirmaClient | Response {
@@ -58,10 +64,13 @@ async function loadLease(c: Context<AppEnv>, leaseId: string): Promise<LeaseRow 
   return get<LeaseRow>(
     c,
     `SELECT l.id, l.start_date::text, l.end_date::text, l.monthly_rent::text,
-            u.name AS unit_name, p.name AS property_name
+            u.name AS unit_name, p.name AS property_name,
+            t.first_name AS tenant_first_name, t.last_name AS tenant_last_name,
+            t.government_id AS tenant_government_id
      FROM leases l
      LEFT JOIN units u ON u.id = l.unit_id AND u.organization_id = l.organization_id
      LEFT JOIN properties p ON p.id = u.property_id AND p.organization_id = u.organization_id
+     LEFT JOIN tenants t ON t.id = l.primary_tenant_id AND t.organization_id = l.organization_id
      WHERE l.id = $1 AND l.organization_id = $2`,
     [leaseId, orgId(c)],
   );
@@ -75,7 +84,7 @@ export function mountSignatureRoutes(app: Hono<AppEnv>, deps?: { firma?: FirmaCl
     if (!lease) return c.json({ error: "Not found" }, 404);
     const signatures = await query(
       c,
-      `SELECT id, provider, provider_request_id, status, document_id, source_document_id,
+      `SELECT id, purpose, provider, provider_request_id, status, document_id, source_document_id,
               created_by, sent_at, completed_at, last_error, created_at
        FROM lease_signatures
        WHERE organization_id = $1 AND lease_id = $2
@@ -119,15 +128,16 @@ export function mountSignatureRoutes(app: Hono<AppEnv>, deps?: { firma?: FirmaCl
     const client = firmaFor(c, deps?.firma);
     if (client instanceof Response) return client;
 
+    const purpose = parsed.data.purpose ?? "lease";
     const open = await get<{ id: string }>(
       c,
       `SELECT id FROM lease_signatures
-       WHERE organization_id = $1 AND lease_id = $2 AND status IN ${OPEN_STATUSES}`,
-      [orgId(c), leaseId],
+       WHERE organization_id = $1 AND lease_id = $2 AND purpose = $3 AND status IN ${OPEN_STATUSES}`,
+      [orgId(c), leaseId, purpose],
     );
     if (open) return c.json({ error: "A signature request is already in progress" }, 409);
 
-    const pdf = await loadPdf(c, lease, parsed.data.document_id);
+    const pdf = await loadPdf(c, lease, purpose, parsed.data.document_id);
     if ("error" in pdf) return c.json({ error: pdf.error }, pdf.status);
 
     const signatureId = crypto.randomUUID();
@@ -135,9 +145,9 @@ export function mountSignatureRoutes(app: Hono<AppEnv>, deps?: { firma?: FirmaCl
       await query(
         c,
         `INSERT INTO lease_signatures (
-           id, organization_id, lease_id, provider, status, source_document_id, created_by
-         ) VALUES ($1, $2, $3, 'firma_dev', 'draft', $4, $5)`,
-        [signatureId, orgId(c), leaseId, pdf.sourceDocumentId, c.get("userId")],
+           id, organization_id, lease_id, purpose, provider, status, source_document_id, created_by
+         ) VALUES ($1, $2, $3, $4, 'firma_dev', 'draft', $5, $6)`,
+        [signatureId, orgId(c), leaseId, purpose, pdf.sourceDocumentId, c.get("userId")],
       );
     } catch (err) {
       if ((err as { code?: string }).code === "23505") {
@@ -155,7 +165,9 @@ export function mountSignatureRoutes(app: Hono<AppEnv>, deps?: { firma?: FirmaCl
     let sent: Awaited<ReturnType<FirmaClient["createAndSend"]>>;
     try {
       sent = await client.createAndSend({
-        name: `Contrato ${lease.property_name ?? ""} ${lease.unit_name ?? ""}`.trim(),
+        name: `${purpose === "inventory" ? "Inventario" : "Contrato"} ${lease.property_name ?? ""} ${lease.unit_name ?? ""}`
+          .trim()
+          .slice(0, 255),
         pdf: pdf.bytes,
         filename: pdf.filename,
         recipients: recipients.map((recipient) => ({
@@ -220,6 +232,8 @@ export function mountSignatureRoutes(app: Hono<AppEnv>, deps?: { firma?: FirmaCl
   app.post("/api/leases/:id/signature/resend", async (c) => {
     const leaseId = uuidParam(c.req.param("id"));
     if (!leaseId) return c.json({ error: "Invalid ID" }, 400);
+    const purpose = purposeQuery(c);
+    if (!purpose) return c.json({ error: "Invalid purpose" }, 400);
     const lease = await loadLease(c, leaseId);
     if (!lease) return c.json({ error: "Not found" }, 404);
     const client = firmaFor(c, deps?.firma);
@@ -228,9 +242,9 @@ export function mountSignatureRoutes(app: Hono<AppEnv>, deps?: { firma?: FirmaCl
     const signature = await get<{ id: string; provider_request_id: string | null }>(
       c,
       `SELECT id, provider_request_id FROM lease_signatures
-       WHERE organization_id = $1 AND lease_id = $2 AND status IN ${OPEN_STATUSES}
+       WHERE organization_id = $1 AND lease_id = $2 AND purpose = $3 AND status IN ${OPEN_STATUSES}
        ORDER BY created_at DESC LIMIT 1`,
-      [orgId(c), leaseId],
+      [orgId(c), leaseId, purpose],
     );
     if (!signature?.provider_request_id) return c.json({ error: "Not found" }, 404);
     const pending = await query<{ provider_recipient_id: string | null }>(
@@ -267,6 +281,8 @@ export function mountSignatureRoutes(app: Hono<AppEnv>, deps?: { firma?: FirmaCl
   app.post("/api/leases/:id/signature/cancel", async (c) => {
     const leaseId = uuidParam(c.req.param("id"));
     if (!leaseId) return c.json({ error: "Invalid ID" }, 400);
+    const purpose = purposeQuery(c);
+    if (!purpose) return c.json({ error: "Invalid purpose" }, 400);
     const parsed = await parseJson(c, CancelBody);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const lease = await loadLease(c, leaseId);
@@ -277,9 +293,9 @@ export function mountSignatureRoutes(app: Hono<AppEnv>, deps?: { firma?: FirmaCl
     const signature = await get<{ id: string; provider_request_id: string | null; status: string }>(
       c,
       `SELECT id, provider_request_id, status FROM lease_signatures
-       WHERE organization_id = $1 AND lease_id = $2 AND status IN ${OPEN_STATUSES}
+       WHERE organization_id = $1 AND lease_id = $2 AND purpose = $3 AND status IN ${OPEN_STATUSES}
        ORDER BY created_at DESC LIMIT 1`,
-      [orgId(c), leaseId],
+      [orgId(c), leaseId, purpose],
     );
     if (!signature) return c.json({ error: "Not found" }, 404);
     if (signature.provider_request_id) {
@@ -311,28 +327,62 @@ export function mountSignatureRoutes(app: Hono<AppEnv>, deps?: { firma?: FirmaCl
   });
 }
 
+async function loadLandlord(c: Context<AppEnv>): Promise<{ name: string; governmentId: string }> {
+  const rows = await query<{ key: string; value: string }>(
+    c,
+    `SELECT key, value FROM settings
+     WHERE organization_id = $1
+       AND key IN ('landlord_first_name', 'landlord_last_name', 'landlord_government_id')`,
+    [orgId(c)],
+  );
+  const values = new Map(rows.map((row) => [row.key, row.value.trim()]));
+  const name = [values.get("landlord_first_name"), values.get("landlord_last_name")]
+    .filter(Boolean)
+    .join(" ");
+  return { name, governmentId: values.get("landlord_government_id") ?? "" };
+}
+
+function purposeQuery(c: Context<AppEnv>): "lease" | "inventory" | null {
+  const parsed = Purpose.safeParse(c.req.query("purpose") ?? "lease");
+  return parsed.success ? parsed.data : null;
+}
+
 async function loadPdf(
   c: Context<AppEnv>,
   lease: LeaseRow,
+  purpose: "lease" | "inventory",
   documentId: string | undefined,
 ): Promise<
   | { bytes: Uint8Array; filename: string; sourceDocumentId: string | null }
   | { error: string; status: 400 | 404 | 503 }
 > {
   if (!documentId) {
+    if (purpose === "inventory") {
+      return { error: "Sube un PDF de inventario antes de enviarlo a firma", status: 400 };
+    }
+    const tenantName = [lease.tenant_first_name, lease.tenant_last_name].filter(Boolean).join(" ");
+    const landlord = await loadLandlord(c);
     const bytes = buildLeaseSummaryPdf([
       "Contrato de arrendamiento",
       `${lease.property_name ?? "Propiedad"} · ${lease.unit_name ?? "Unidad"}`,
+      `Arrendador: ${landlord.name || "—"}`,
+      `Identidad del arrendador: ${landlord.governmentId || "—"}`,
+      `Inquilino: ${tenantName || "—"}`,
+      `Identidad del inquilino: ${lease.tenant_government_id?.trim() || "—"}`,
       `Inicio: ${lease.start_date}`,
       `Fin: ${lease.end_date}`,
       `Renta mensual: ${lease.monthly_rent}`,
     ]);
-    return { bytes, filename: "contrato.pdf", sourceDocumentId: null };
+    return {
+      bytes,
+      filename: "contrato.pdf",
+      sourceDocumentId: null,
+    };
   }
 
-  const document = await get<{ r2_key: string; filename: string; mime: string }>(
+  const document = await get<{ r2_key: string; filename: string; mime: string; kind: string }>(
     c,
-    `SELECT r2_key, filename, mime FROM documents
+    `SELECT r2_key, filename, mime, kind FROM documents
      WHERE id = $1 AND organization_id = $2 AND entity_type = 'lease' AND entity_id = $3
        AND deleted_at IS NULL`,
     [documentId, orgId(c), lease.id],
@@ -340,6 +390,15 @@ async function loadPdf(
   if (!document) return { error: "Not found", status: 404 };
   if (document.mime !== "application/pdf")
     return { error: "The contract file must be a PDF", status: 400 };
+  if (purpose === "inventory" && document.kind !== "inventory") {
+    return { error: "The inventory file must be an inventory PDF", status: 400 };
+  }
+  if (
+    purpose === "lease" &&
+    (document.kind === "inventory" || document.kind === "signed_inventory")
+  ) {
+    return { error: "The lease file cannot be an inventory PDF", status: 400 };
+  }
   const bucket = c.env.FILES;
   if (!bucket) return { error: "File storage is not configured", status: 503 };
   const object = await bucket.get(document.r2_key);

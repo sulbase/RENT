@@ -14,6 +14,7 @@ export type Route =
   | { name: "rent" }
   | { name: "maintenance" }
   | { name: "messages" }
+  | { name: "vendors" }
   | { name: "settings" }
   | { name: "not-found" };
 
@@ -29,6 +30,7 @@ function parse(path: string): Route {
   if (path === "/rent") return { name: "rent" };
   if (path === "/maintenance") return { name: "maintenance" };
   if (path === "/messages") return { name: "messages" };
+  if (path === "/vendors") return { name: "vendors" };
   if (path === "/settings") return { name: "settings" };
   return { name: "not-found" };
 }
@@ -41,6 +43,7 @@ export function useRouter() {
     if (href === window.location.pathname) return;
     window.history.pushState(null, "", href);
     setPath(href);
+    window.dispatchEvent(new PopStateEvent("popstate"));
   }, []);
 
   useEffect(() => {
