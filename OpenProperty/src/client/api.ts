@@ -78,8 +78,13 @@ async function readJson<T>(r: Response): Promise<T> {
     const bodyError = (data as { error?: string } | null)?.error;
     if (bodyError) throw new Error(bodyError);
     if (r.status === 500 || r.status === 502 || r.status === 503) {
+      const local =
+        typeof window !== "undefined" &&
+        (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
       throw new Error(
-        "API no disponible (Worker en :8787). Reinicia con pnpm dev:auth y espera [api] Ready.",
+        local
+          ? "API no disponible (Worker en :8787). Reinicia con pnpm dev:auth y espera [api] Ready."
+          : "API no disponible. Inténtalo de nuevo en unos segundos.",
       );
     }
     throw new Error(`${r.status} ${r.statusText}`);
