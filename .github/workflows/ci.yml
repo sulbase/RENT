@@ -16,8 +16,9 @@ defaults:
 env:
   VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
   VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-  # Baked into prod builds so confirmation emails return to the Worker, not localhost:3000.
-  VITE_AUTH_REDIRECT_URL: https://rent.sistemas-d5d.workers.dev/app
+  # Baked into prod builds so auth emails return to the canonical domain, not localhost:3000.
+  # Must be in Supabase Auth → URL Configuration → Redirect URLs.
+  VITE_AUTH_REDIRECT_URL: https://rent.sulbase.com/app
 
 jobs:
   secret_scan:

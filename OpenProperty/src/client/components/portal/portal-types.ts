@@ -24,6 +24,24 @@ export type PortalDocument = {
   property_name: string | null;
 };
 
+export type PortalCharge = LedgerCharge & {
+  amount_paid: number;
+  lease_id: string;
+};
+
+export type PortalReceipt = {
+  id: string;
+  charge_id: string;
+  amount: number;
+  paid_on: string;
+  reference: string | null;
+  status: "pending" | "approved" | "rejected";
+  rejection_reason: string | null;
+  created_at: string;
+  reviewed_at: string | null;
+  period: string;
+};
+
 export type PortalHome = {
   tenant: {
     first_name: string;
@@ -34,7 +52,7 @@ export type PortalHome = {
   };
   settings: Record<string, string>;
   leases: PortalLease[];
-  charges: LedgerCharge[];
+  charges: PortalCharge[];
   payments: LedgerPayment[];
   documents: PortalDocument[];
 };

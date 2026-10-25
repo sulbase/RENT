@@ -4,6 +4,7 @@ export const NOTIFICATION_KINDS = [
   "lease_expiring",
   "work_order",
   "signature",
+  "payment_receipt",
   "system",
 ] as const;
 
@@ -14,6 +15,7 @@ export const NOTIFICATION_ENTITY_TYPES = [
   "lease",
   "work_order",
   "lease_signature",
+  "payment_submission",
 ] as const;
 
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
