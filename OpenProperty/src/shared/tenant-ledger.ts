@@ -9,6 +9,7 @@ export type LedgerCharge = {
   period: string;
   property_name?: string | null;
   unit_name?: string | null;
+  lease_id?: string;
 };
 
 export type LedgerPayment = {
@@ -20,6 +21,7 @@ export type LedgerPayment = {
   void_reason?: string | null;
   property_name?: string | null;
   unit_name?: string | null;
+  lease_id?: string;
 };
 
 export type LedgerEntry = {

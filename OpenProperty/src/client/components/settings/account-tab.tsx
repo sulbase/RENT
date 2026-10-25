@@ -67,6 +67,7 @@ export function AccountTab() {
       </Card>
 
       <LandlordCard />
+      <BankCard />
 
       <Card className="p-6">
         <h2 className="mb-1 text-sm font-semibold">Correo</h2>
@@ -266,6 +267,78 @@ function LandlordCard() {
         <div className="mt-4">
           <Button type="button" onClick={() => void save()} disabled={saving}>
             {saving ? "Guardando…" : "Guardar arrendador"}
+          </Button>
+        </div>
+      )}
+      {notice && <p className="mt-3 text-sm text-muted-foreground">{notice}</p>}
+    </Card>
+  );
+}
+
+function BankCard() {
+  const app = useApp();
+  const { role } = useAuth();
+  const canEdit = role === "owner" || role === "manager";
+  const [holder, setHolder] = useState(app.settings.bank_holder);
+  const [bank, setBank] = useState(app.settings.bank_name);
+  const [account, setAccount] = useState(app.settings.bank_account);
+  const [clabe, setClabe] = useState(app.settings.bank_clabe);
+  const [saving, setSaving] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    setHolder(app.settings.bank_holder);
+    setBank(app.settings.bank_name);
+    setAccount(app.settings.bank_account);
+    setClabe(app.settings.bank_clabe);
+  }, [app.settings]);
+
+  async function save() {
+    setSaving(true);
+    setNotice(null);
+    try {
+      await app.updateSettings({
+        bank_holder: holder.trim(),
+        bank_name: bank.trim(),
+        bank_account: account.trim(),
+        bank_clabe: clabe.trim(),
+      });
+      setNotice("Datos bancarios actualizados. El inquilino los ve al pagar por transferencia.");
+    } catch (err) {
+      app.setError((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card className="p-6">
+      <h2 className="mb-1 text-sm font-semibold">Datos para transferencia</h2>
+      <p className="mb-4 text-xs text-muted-foreground">
+        Cuenta donde el inquilino deposita la renta. Se muestran en Pagos del portal.
+      </p>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div>
+          <Label htmlFor="bank-holder">Titular</Label>
+          <Input id="bank-holder" value={holder} maxLength={120} disabled={!canEdit} onChange={(e) => setHolder(e.target.value)} />
+        </div>
+        <div>
+          <Label htmlFor="bank-name">Banco</Label>
+          <Input id="bank-name" value={bank} maxLength={120} disabled={!canEdit} onChange={(e) => setBank(e.target.value)} />
+        </div>
+        <div>
+          <Label htmlFor="bank-account">Número de cuenta</Label>
+          <Input id="bank-account" value={account} maxLength={32} disabled={!canEdit} onChange={(e) => setAccount(e.target.value)} />
+        </div>
+        <div>
+          <Label htmlFor="bank-clabe">CLABE</Label>
+          <Input id="bank-clabe" value={clabe} maxLength={32} disabled={!canEdit} onChange={(e) => setClabe(e.target.value)} />
+        </div>
+      </div>
+      {canEdit && (
+        <div className="mt-4">
+          <Button type="button" onClick={() => void save()} disabled={saving}>
+            {saving ? "Guardando…" : "Guardar datos bancarios"}
           </Button>
         </div>
       )}

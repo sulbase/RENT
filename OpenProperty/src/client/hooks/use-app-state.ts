@@ -30,6 +30,10 @@ export interface AppSettings {
   landlord_last_name: string;
   landlord_email: string;
   landlord_government_id: string;
+  bank_holder: string;
+  bank_name: string;
+  bank_account: string;
+  bank_clabe: string;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -45,6 +49,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   landlord_last_name: "",
   landlord_email: "",
   landlord_government_id: "",
+  bank_holder: "",
+  bank_name: "",
+  bank_account: "",
+  bank_clabe: "",
 };
 
 export function parseSettings(raw: Record<string, string>): AppSettings {
@@ -71,6 +79,10 @@ export function parseSettings(raw: Record<string, string>): AppSettings {
     landlord_last_name: raw.landlord_last_name?.trim() ?? "",
     landlord_email: raw.landlord_email?.trim() ?? "",
     landlord_government_id: raw.landlord_government_id?.trim() ?? "",
+    bank_holder: raw.bank_holder?.trim() ?? "",
+    bank_name: raw.bank_name?.trim() ?? "",
+    bank_account: raw.bank_account?.trim() ?? "",
+    bank_clabe: raw.bank_clabe?.trim() ?? "",
   };
   setFormatPrefs({
     language: parsed.language,

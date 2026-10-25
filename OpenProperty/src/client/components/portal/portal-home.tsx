@@ -1,196 +1,122 @@
-import { useMemo, useState } from "react";
-import { FileText } from "lucide-react";
-import { apiBlob } from "@/api";
+import { useState } from "react";
+import { Info } from "lucide-react";
 import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatDate, formatMoney } from "@/lib/utils";
-import { buildTenantLedger, ledgerPlace, ledgerPlaces } from "../../../shared/tenant-ledger";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
+import { formatMoney, formatPeriod } from "@/lib/utils";
 import { usePortal } from "./portal-context";
-import { PortalPayables } from "./portal-payables";
-import type { PortalDocument, PortalLease } from "./portal-types";
+import type { PortalCharge, PortalLease } from "./portal-types";
+
+function balanceOf(charge: PortalCharge): number {
+  return Math.max(0, Math.round((charge.amount - (charge.amount_paid ?? 0)) * 100) / 100);
+}
+
+function openCharges(charges: PortalCharge[], leaseId: string): PortalCharge[] {
+  return charges
+    .filter((charge) => charge.lease_id === leaseId && charge.status !== "paid" && charge.status !== "waived" && balanceOf(charge) > 0)
+    .sort((a, b) => (a.due_date < b.due_date ? -1 : 1));
+}
 
 export function PortalHomePage() {
-  const { home, settings } = usePortal();
-  const [error, setError] = useState<string | null>(null);
-  const [unitFilter, setUnitFilter] = useState("all");
+  const { home, settings, navigate } = usePortal();
+  const [detail, setDetail] = useState<PortalLease | null>(null);
+  if (!home) return null;
   const currency = settings.currency;
 
-  const places = useMemo(
-    () => ledgerPlaces([...(home?.charges ?? []), ...(home?.payments ?? [])]),
-    [home],
-  );
-  const selectedPlace = places.includes(unitFilter) ? unitFilter : "all";
-  const ledger = useMemo(() => {
-    const matches = <T extends { property_name?: string | null; unit_name?: string | null }>(row: T) =>
-      selectedPlace === "all" || ledgerPlace(row.property_name, row.unit_name) === selectedPlace;
-    return buildTenantLedger({
-      charges: (home?.charges ?? []).filter(matches),
-      payments: (home?.payments ?? []).filter(matches),
-    });
-  }, [home, selectedPlace]);
-
-  if (!home) return null;
-  const balance = ledger[0]?.balance ?? 0;
-
-  async function openDocument(doc: PortalDocument) {
-    try {
-      const blob = await apiBlob(`/api/portal/documents/${doc.id}`);
-      const url = URL.createObjectURL(blob);
-      window.open(url, "_blank", "noopener");
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo abrir el documento");
-    }
-  }
-
   return (
-    <PageShell
-      title="Inicio"
-      meta={home.tenant.organization_name}
-      width="max-w-5xl"
-      notifications={false}
-    >
-      {error && <p className="text-sm text-destructive">{error}</p>}
-
-      <Card className="p-5">
-        <div className="text-[1.0625rem] font-semibold leading-tight">
-          {home.leases.length > 1 ? "Contratos vigentes" : "Contrato vigente"}
-        </div>
-        {home.leases.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">No tienes un contrato vigente.</p>
-        ) : (
-          <ul className="mt-2 divide-y">
-            {home.leases.map((lease) => (
-              <li key={lease.id} className="py-3 first:pt-1 last:pb-0">
-                <LeaseFields lease={lease} currency={currency} />
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-
-      <PortalPayables />
-
-      <Card className="p-5">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-[1.0625rem] font-semibold leading-tight">Estado de cuenta</h2>
-          <div className="flex flex-wrap items-center gap-3">
-            {places.length > 1 ? (
-              <Select value={selectedPlace} onValueChange={setUnitFilter}>
-                <SelectTrigger className="w-64" aria-label="Propiedad o unidad">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todas las propiedades</SelectItem>
-                  {places.map((place) => (
-                    <SelectItem key={place} value={place}>{place}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : null}
-            <div className="text-sm">
-              <span className="text-muted-foreground">Saldo </span>
-              <span
-                className={`font-semibold tabular-nums ${balance > 0 ? "text-destructive-solid" : ""}`}
-              >
-                {formatMoney(balance, currency)}
-              </span>
-            </div>
-          </div>
-        </div>
-        {ledger.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Aún no hay movimientos.</p>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Fecha</TableHead>
-                <TableHead>Concepto</TableHead>
-                <TableHead className="text-right">
-                  <span className="font-medium text-destructive-solid">Cargos</span>
-                  <span className="text-muted-foreground"> / Pagos</span>
-                </TableHead>
-                <TableHead className="text-right">Saldo</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {ledger.map((entry) => (
-                <TableRow key={entry.id}>
-                  <TableCell>{formatDate(entry.date)}</TableCell>
-                  <TableCell>
-                    <div>{entry.typeLabel}</div>
-                    {entry.place ? <div className="text-xs text-muted-foreground">{entry.place}</div> : null}
-                    {entry.note ? <div className="text-xs text-muted-foreground">{entry.note}</div> : null}
-                  </TableCell>
-                  <TableCell
-                    className={`text-right tabular-nums ${
-                      entry.kind === "charge" && entry.counts ? "font-semibold text-destructive-solid" : ""
-                    } ${entry.counts ? "" : "text-muted-foreground line-through"}`}
-                  >
-                    {formatMoney(entry.amount, currency)}
-                  </TableCell>
-                  <TableCell className="text-right font-medium tabular-nums">
-                    {formatMoney(entry.balance, currency)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </Card>
-
-      <Card className="p-5">
-        <h2 className="mb-3 text-[1.0625rem] font-semibold leading-tight">Contratos firmados</h2>
-        {home.documents.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Aún no hay contratos firmados en el archivo.</p>
-        ) : (
-          <ul className="divide-y">
-            {home.documents.map((doc) => (
-              <li key={doc.id} className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
-                <div className="flex min-w-0 items-center gap-3">
-                  <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{doc.filename}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {[doc.property_name, doc.unit_name].filter(Boolean).join(" · ")} · {formatDate(doc.created_at)}
-                    </p>
+    <PageShell title="Página principal" meta={home.tenant.organization_name} width="max-w-5xl" notifications={false}>
+      {home.leases.length === 0 ? (
+        <Card className="p-5">
+          <p className="text-sm text-muted-foreground">No tienes un contrato vigente.</p>
+        </Card>
+      ) : (
+        <div className="grid gap-4">
+          {home.leases.map((lease) => {
+            const lines = openCharges(home.charges, lease.id);
+            const total = lines.reduce((sum, charge) => sum + balanceOf(charge), 0);
+            return (
+              <Card key={lease.id} className="p-5">
+                <p className="text-sm font-medium">{lease.unit_name ?? "Unidad"}</p>
+                <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                      Monto adeudado
+                      <button
+                        type="button"
+                        className="inline-flex size-5 items-center justify-center rounded-full text-info-solid"
+                        aria-label="Detalles del saldo"
+                        onClick={() => setDetail(lease)}
+                      >
+                        <Info className="size-4" aria-hidden />
+                      </button>
+                    </div>
+                    <p className="mt-1 text-2xl font-semibold tabular-nums">{formatMoney(total, currency)}</p>
                   </div>
+                  <Button type="button" onClick={() => navigate(`/portal/pagos?lease=${lease.id}`)}>
+                    Pagar ahora
+                  </Button>
                 </div>
-                <Button variant="outline" onClick={() => void openDocument(doc)}>
-                  Ver PDF
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      <Dialog open={detail !== null} onOpenChange={(open) => { if (!open) setDetail(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Detalles del saldo</DialogTitle>
+          </DialogHeader>
+          {detail && (
+            <BalanceDetail
+              charges={openCharges(home.charges, detail.id)}
+              currency={currency}
+              unit={detail.unit_name}
+            />
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDetail(null)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageShell>
   );
 }
 
-function LeaseFields({ lease, currency }: { lease: PortalLease; currency: string }) {
-  return (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-      <Field label="Propiedad">{lease.property_name ?? "—"}</Field>
-      <Field label="Unidad">{lease.unit_name ?? "—"}</Field>
-      <Field label="Vigencia">
-        {formatDate(lease.start_date)} → {formatDate(lease.end_date)}
-      </Field>
-      <Field label="Renta mensual">{formatMoney(lease.monthly_rent, currency)}</Field>
-      <Field label="Día de pago">{`Día ${lease.rent_due_day} de cada mes`}</Field>
-      <Field label="Depósito">{formatMoney(lease.deposit, currency)}</Field>
-    </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function BalanceDetail({
+  charges,
+  currency,
+  unit,
+}: {
+  charges: PortalCharge[];
+  currency: string;
+  unit: string | null;
+}) {
+  const total = charges.reduce((sum, charge) => sum + balanceOf(charge), 0);
   return (
     <div>
-      <div className="section-label">{label}</div>
-      <div className="mt-0.5 text-sm font-medium">{children}</div>
+      {unit && <p className="mb-3 text-sm text-muted-foreground">{unit}</p>}
+      {charges.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No hay saldo pendiente.</p>
+      ) : (
+        <ul className="space-y-2 text-sm">
+          {charges.map((charge) => (
+            <li key={charge.id} className="flex items-baseline justify-between gap-3">
+              <span className="capitalize">Renta de {formatPeriod(charge.period)}</span>
+              <span className="tabular-nums">{formatMoney(balanceOf(charge), currency)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Separator className="my-3" />
+      <div className="flex items-baseline justify-between text-sm font-semibold">
+        <span>Total</span>
+        <span className="tabular-nums">{formatMoney(total, currency)}</span>
+      </div>
     </div>
   );
 }

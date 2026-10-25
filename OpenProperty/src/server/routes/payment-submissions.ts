@@ -268,6 +268,201 @@ export function mountPaymentSubmissionRoutes(app: Hono<AppEnv>) {
     return c.json({ submission: { id: submissionId, status: "pending" } }, 201);
   });
 
+  app.post("/api/portal/receipts", receiptUploadRateLimit, async (c) => {
+    const tenantId = portalTenant(c);
+    if (!tenantId) return c.json({ error: "No tienes acceso al portal" }, 403);
+    const bucket = c.env.FILES;
+    if (!bucket) return c.json({ error: "File storage is not configured" }, 503);
+    const declaredLength = Number(c.req.header("content-length") ?? "0");
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_UPLOAD_REQUEST_BYTES) {
+      return c.json({ error: RECEIPT_TOO_LARGE }, 413);
+    }
+    const body = await c.req.parseBody();
+    let chargeIds: string[] = [];
+    try {
+      const raw = formText(body.charge_ids);
+      const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+      if (!Array.isArray(parsed)) throw new Error("bad");
+      chargeIds = [...new Set(parsed.map((id) => String(id)))];
+    } catch {
+      return c.json({ error: "Selecciona al menos un cargo" }, 400);
+    }
+    if (chargeIds.length === 0 || chargeIds.length > 24 || chargeIds.some((id) => !z.string().uuid().safeParse(id).success)) {
+      return c.json({ error: "Selecciona los cargos a pagar" }, 400);
+    }
+    const fields = z
+      .object({
+        paid_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha de pago inválida"),
+        reference: z.string().trim().max(120).optional(),
+        note: z.string().trim().max(500).optional(),
+      })
+      .safeParse({
+        paid_on: formText(body.paid_on),
+        reference: formText(body.reference),
+        note: formText(body.note),
+      });
+    if (!fields.success) {
+      return c.json({ error: fields.error.issues[0]?.message ?? "Datos inválidos" }, 400);
+    }
+    if (fields.data.paid_on > latestPaidOn()) {
+      return c.json({ error: "La fecha de pago no puede ser futura" }, 400);
+    }
+    const file = body.file;
+    if (!(file instanceof File)) return c.json({ error: "Adjunta el comprobante" }, 400);
+    if (file.size > MAX_FILE_BYTES) return c.json({ error: RECEIPT_TOO_LARGE }, 413);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const checked = validateUpload({
+      filename: file.name,
+      declaredType: file.type,
+      bytes,
+      size: file.size,
+      kind: "other",
+      isCover: false,
+      maxBytes: MAX_FILE_BYTES,
+      oversizeError: RECEIPT_TOO_LARGE,
+    });
+    if (!checked.ok) {
+      const message = uploadError(checked.error);
+      return c.json({ error: message }, message === RECEIPT_TOO_LARGE ? 413 : 400);
+    }
+
+    const o = orgId(c);
+    const rows = await query<{
+      id: string;
+      lease_id: string;
+      amount: string;
+      amount_paid: string;
+      status: string;
+      period: string;
+      pending: number;
+      first_name: string;
+      last_name: string;
+    }>(
+      c,
+      `SELECT c.id, c.lease_id, c.amount::text,
+              COALESCE((
+                SELECT SUM(p.amount) FROM payments p
+                WHERE p.charge_id = c.id AND p.organization_id = c.organization_id
+                  AND p.voided_at IS NULL
+              ), 0)::text AS amount_paid,
+              c.status, c.period,
+              (SELECT COUNT(*)::int FROM payment_submissions s
+               WHERE s.charge_id = c.id AND s.organization_id = c.organization_id
+                 AND s.status = 'pending') AS pending,
+              t.first_name, t.last_name
+       FROM rent_charges c
+       JOIN leases l ON l.id = c.lease_id AND l.organization_id = c.organization_id
+       JOIN tenants t ON t.id = l.primary_tenant_id AND t.organization_id = l.organization_id
+       WHERE c.organization_id = $1 AND l.primary_tenant_id = $2 AND c.id = ANY($3::uuid[])`,
+      [o, tenantId, chargeIds],
+    );
+    if (rows.length !== chargeIds.length) return c.json({ error: "Not found" }, 404);
+    const leaseId = rows[0]?.lease_id;
+    if (rows.some((row) => row.lease_id !== leaseId)) {
+      return c.json({ error: "Los cargos deben ser de la misma unidad" }, 400);
+    }
+    const allocations: { id: string; period: string; cents: number }[] = [];
+    for (const row of rows) {
+      if (row.status === "paid" || row.status === "waived") {
+        return c.json({ error: "Un cargo ya no tiene saldo pendiente" }, 409);
+      }
+      if (Number(row.pending) >= MAX_PENDING_PER_CHARGE) {
+        return c.json({ error: "Ya tienes comprobantes en revisión para un cargo" }, 409);
+      }
+      const cents = toCents(row.amount) - toCents(row.amount_paid);
+      if (cents <= 0) return c.json({ error: "Un cargo ya no tiene saldo pendiente" }, 409);
+      allocations.push({ id: row.id, period: row.period, cents });
+    }
+    const usage = await get<{ file_count: number | string; total_bytes: number | string }>(
+      c,
+      `SELECT COUNT(*)::int AS file_count, COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes
+       FROM documents WHERE organization_id = $1 AND deleted_at IS NULL`,
+      [o],
+    );
+    const quota = orgQuotaAllows({
+      fileCount: Number(usage?.file_count ?? 0),
+      totalBytes: Number(usage?.total_bytes ?? 0),
+      nextSize: file.size,
+    });
+    if (!quota.ok)
+      return c.json({ error: "No hay espacio para más archivos. Avisa a tu administración" }, 409);
+
+    const documentId = crypto.randomUUID();
+    const r2Key = buildObjectKey({
+      organizationId: o,
+      entityType: "tenant",
+      entityId: tenantId,
+      filename: checked.filename,
+      objectId: documentId,
+    });
+    await bucket.put(r2Key, bytes, { httpMetadata: { contentType: checked.mime } });
+    const submissionIds = allocations.map(() => crypto.randomUUID());
+    try {
+      await c.get("sql").begin(async (raw) => {
+        const tx = raw as unknown as Tx;
+        await tx.unsafe(
+          `INSERT INTO documents (
+             id, organization_id, entity_type, entity_id, tenant_id,
+             kind, r2_key, filename, mime, size_bytes, uploaded_by, is_cover, label
+           ) VALUES ($1, $2, 'tenant', $3, $3, 'other', $4, $5, $6, $7, $8, false, $9)`,
+          [
+            documentId,
+            o,
+            tenantId,
+            r2Key,
+            checked.filename,
+            checked.mime,
+            file.size,
+            c.get("userId"),
+            RECEIPT_LABEL,
+          ],
+        );
+        for (let i = 0; i < allocations.length; i++) {
+          const row = allocations[i];
+          if (!row) continue;
+          await tx.unsafe(
+            `INSERT INTO payment_submissions (
+               id, organization_id, tenant_id, charge_id, document_id,
+               amount, paid_on, reference, note, submitted_by
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7::date, $8, $9, $10)`,
+            [
+              submissionIds[i],
+              o,
+              tenantId,
+              row.id,
+              documentId,
+              centsToAmount(row.cents),
+              fields.data.paid_on,
+              fields.data.reference || null,
+              fields.data.note || null,
+              c.get("userId"),
+            ],
+          );
+        }
+      });
+    } catch (err) {
+      await bucket.delete(r2Key);
+      throw err;
+    }
+    const total = allocations.reduce((sum, row) => sum + row.cents, 0);
+    const who = `${rows[0].first_name} ${rows[0].last_name}`;
+    try {
+      await insertNotification(c.get("sql"), {
+        organizationId: o,
+        kind: "payment_receipt",
+        title: "Comprobante de pago por revisar",
+        body: `${who} envió un comprobante de ${centsToAmount(total)} para ${allocations.length} cargo(s).`,
+        severity: "info",
+        entityType: "payment_submission",
+        entityId: submissionIds[0],
+        period: "submitted",
+      });
+    } catch {
+      /* the receipt is saved; the mailbox row is best effort */
+    }
+    return c.json({ submissions: submissionIds.map((id) => ({ id, status: "pending" })) }, 201);
+  });
+
   app.get("/api/payment-submissions", async (c) => {
     const parsed = parseQuery(c, ListQuery);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);

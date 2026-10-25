@@ -91,6 +91,14 @@ function normalizeSetting(
         };
       }
       return { ok: true, value: text };
+    case "bank_holder":
+    case "bank_name":
+      if (text.length > 120) return { ok: false, error: "El dato bancario es demasiado largo" };
+      return { ok: true, value: text };
+    case "bank_account":
+    case "bank_clabe":
+      if (text.length > 32) return { ok: false, error: "La cuenta o CLABE es demasiado larga" };
+      return { ok: true, value: text };
     default:
       return { ok: false, error: `Unknown setting ${key}` };
   }
