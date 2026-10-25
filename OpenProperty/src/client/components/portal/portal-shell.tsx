@@ -8,9 +8,11 @@ import { PortalContext, type PortalState } from "./portal-context";
 import { PortalHomePage } from "./portal-home";
 import { PortalMaintenancePage } from "./portal-maintenance";
 import { PortalMailPage } from "./portal-mail";
+import { PortalSettingsPage } from "./portal-settings";
+import { AppNavSignOut } from "@/components/app-nav-sign-out";
 import type { PortalHome } from "./portal-types";
 
-type PortalRoute = "home" | "maintenance" | "mail";
+type PortalRoute = "home" | "maintenance" | "mail" | "settings";
 
 const HOME_PATH = "/portal";
 
@@ -18,12 +20,14 @@ const ROUTE_PATH: Record<PortalRoute, string> = {
   home: HOME_PATH,
   maintenance: "/portal/mantenimiento",
   mail: "/portal/correo",
+  settings: "/portal/ajustes",
 };
 
 function parse(pathname: string): PortalRoute {
   const path = internalFromLocation(pathname);
   if (path === ROUTE_PATH.maintenance) return "maintenance";
   if (path === ROUTE_PATH.mail) return "mail";
+  if (path === ROUTE_PATH.settings) return "settings";
   return "home";
 }
 
@@ -88,6 +92,7 @@ export function PortalShell() {
           color: "orange",
         },
         { id: "mail", label: "Correo", href: toAppHref(ROUTE_PATH.mail), icon: "mail", color: "blue" },
+        { id: "settings", label: "Ajustes", href: toAppHref(ROUTE_PATH.settings), icon: "settings" },
       ],
     },
   ];
@@ -102,17 +107,11 @@ export function PortalShell() {
             groups={groups}
             active={route}
             onNavigate={(item) => navigate(item.href ?? ROUTE_PATH.home)}
-          />
+          >
+            <AppNavSignOut onSignOut={() => auth.signOut()} />
+          </AppNav>
         </div>
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="flex items-center justify-end gap-2 border-b border-border px-4 py-2 text-xs text-muted-foreground">
-            <span>
-              {auth.portal?.display_name ?? "Inquilino"} · {auth.portal?.organization_name ?? ""}
-            </span>
-            <button type="button" className="underline" onClick={() => void auth.signOut()}>
-              Cerrar sesión
-            </button>
-          </div>
           {error && !home ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 p-12 text-center">
               <p className="text-sm text-destructive">{error}</p>
@@ -127,6 +126,7 @@ export function PortalShell() {
               {route === "home" && <PortalHomePage />}
               {route === "maintenance" && <PortalMaintenancePage />}
               {route === "mail" && <PortalMailPage />}
+              {route === "settings" && <PortalSettingsPage />}
             </>
           )}
         </main>

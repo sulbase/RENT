@@ -18,9 +18,9 @@ import {
   APPLY_CHARGE_BALANCE_SQL,
   centsToAmount,
   hasAtMostTwoDecimals,
-  rejectPayment,
   toCents,
 } from "../rent/payment-balance";
+import { recordPayment } from "../rent/record-payment";
 import { periodSchema, rentChargeStatusSchema } from "../schemas/common";
 import { parseJson, parseQuery } from "../validation";
 
@@ -217,44 +217,19 @@ export function mountRentRoutes(app: Hono<AppEnv>) {
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const d = parsed.data;
     const o = orgId(c);
-    const amountCents = toCents(d.amount);
-    const outcome = await c.get("sql").begin(async (tx) => {
-      const charges = await tx.unsafe<{ amount: string; status: string }[]>(
-        "SELECT amount::text, status FROM rent_charges WHERE id = $1 AND organization_id = $2 FOR UPDATE",
-        [d.charge_id, o],
-      );
-      const charge = charges[0];
-      if (!charge) return { error: "Cargo no encontrado", status: 404 as const };
-      const sums = await tx.unsafe<{ total: string }[]>(ACTIVE_PAYMENT_SUM_SQL, [d.charge_id, o]);
-      const paidCents = toCents(sums[0]?.total ?? "0");
-      const rejection = rejectPayment({
-        chargeStatus: charge.status,
-        chargeCents: toCents(charge.amount),
-        paidCents,
-        amountCents,
-      });
-      if (rejection) return { error: rejection, status: 400 as const };
-      await tx.unsafe(
-        `INSERT INTO payments (organization_id, charge_id, paid_at, amount, method, reference, notes)
-         VALUES ($1, $2, COALESCE($3::timestamptz, now()), $4, $5, $6, $7)`,
-        [
-          o,
-          d.charge_id,
-          d.paid_at ?? null,
-          centsToAmount(amountCents),
-          d.method ?? "cash",
-          d.reference ?? null,
-          d.notes ?? null,
-        ],
-      );
-      await tx.unsafe(APPLY_CHARGE_BALANCE_SQL, [
-        centsToAmount(paidCents + amountCents),
-        d.charge_id,
-        o,
-      ]);
-      return { ok: true as const };
-    });
-    if ("error" in outcome) return c.json({ error: outcome.error }, outcome.status);
+    const outcome = await c.get("sql").begin((tx) =>
+      recordPayment(tx as unknown as Parameters<typeof recordPayment>[0], {
+        organizationId: o,
+        chargeId: d.charge_id,
+        amountCents: toCents(d.amount),
+        paidAt: d.paid_at ?? null,
+        method: d.method ?? "cash",
+        reference: d.reference ?? null,
+        notes: d.notes ?? null,
+        source: "staff",
+      }),
+    );
+    if (!outcome.ok) return c.json({ error: outcome.error }, outcome.status);
     const updated = await get(c, `${chargeSelect("AND c.id = $2")}`, [o, d.charge_id]);
     return c.json({ charge: normalizeRow(updated as Record<string, unknown>) }, 201);
   });

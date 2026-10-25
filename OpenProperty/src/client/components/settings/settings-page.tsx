@@ -1,5 +1,7 @@
 ﻿import { useEffect, useState } from "react";
+import { LogOut } from "lucide-react";
 import { useApp } from "@/context";
+import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,6 +15,7 @@ import { OrganizationTab } from "@/components/settings/organization-tab";
 const SETTINGS_TAB_KEY = "rent.settingsTab";
 
 export function SettingsPage() {
+  const auth = useAuth();
   const [tab, setTab] = useState("account");
 
   useEffect(() => {
@@ -50,6 +53,13 @@ export function SettingsPage() {
             <PolicyTab />
           </TabsContent>
         </Tabs>
+
+        <div className="md:hidden">
+          <Button type="button" variant="outline" className="w-full" onClick={() => void auth.signOut()}>
+            <LogOut className="size-4" aria-hidden />
+            Cerrar sesión
+          </Button>
+        </div>
     </PageShell>
   );
 }

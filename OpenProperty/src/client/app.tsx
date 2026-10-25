@@ -22,9 +22,9 @@ import { NewPasswordPage } from "./components/auth/new-password-page";
 import { OrgGatePage } from "./components/auth/org-gate-page";
 import { PortalShell } from "./components/portal/portal-shell";
 import { Button } from "./components/ui/button";
+import { AppNavSignOut } from "./components/app-nav-sign-out";
 import { toAppHref } from "../shared/public-site";
 import { resolveAuthScreen } from "./lib/auth-gate";
-import { roleLabel } from "./lib/labels";
 
 const PORTFOLIO: AppNavItem[] = [
   { id: "dashboard", label: "Panel", href: toAppHref("/dashboard"), home: true },
@@ -144,17 +144,11 @@ function AuthenticatedShell() {
             groups={groups}
             active={activeFor(route)}
             onNavigate={(item) => navigate(item.href ?? "/dashboard")}
-          />
+          >
+            <AppNavSignOut onSignOut={() => auth.signOut()} />
+          </AppNav>
         </div>
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          {auth.session && auth.organizationId && (
-            <div className="flex items-center justify-end gap-2 border-b border-border px-4 py-2 text-xs text-muted-foreground">
-              <span>{roleLabel(auth.role ?? "")}</span>
-              <button type="button" className="underline" onClick={() => void auth.signOut()}>
-                Cerrar sesión
-              </button>
-            </div>
-          )}
           {state.loading ? (
             <div className="flex flex-1 items-center justify-center text-muted-foreground">
               Cargando…

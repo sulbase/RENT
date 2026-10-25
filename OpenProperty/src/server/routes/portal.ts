@@ -85,7 +85,7 @@ export function mountPortalRoutes(app: Hono<AppEnv>) {
     );
     const charges = await query(
       c,
-      `SELECT c.id, c.period, c.due_date, c.amount, c.status,
+      `SELECT c.id, c.period, c.due_date, c.amount, c.amount_paid, c.status,
               l.id AS lease_id, u.name AS unit_name, pr.name AS property_name
        FROM rent_charges c
        JOIN leases l ON l.id = c.lease_id AND l.organization_id = c.organization_id

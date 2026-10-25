@@ -4,6 +4,7 @@ import { mountUnitsRoutes } from "./units";
 import { mountTenantsRoutes } from "./tenants";
 import { mountTenantPortalAccessRoutes } from "./tenant-portal-access";
 import { mountPortalRoutes } from "./portal";
+import { mountPaymentSubmissionRoutes } from "./payment-submissions";
 import { mountLeasesRoutes } from "./leases";
 import { mountRentRoutes } from "./rent";
 import { mountVendorsRoutes } from "./vendors";
@@ -28,6 +29,7 @@ export function registerApiRoutes(app: Hono<AppEnv>) {
   mountTenantsRoutes(app);
   mountTenantPortalAccessRoutes(app);
   mountPortalRoutes(app);
+  mountPaymentSubmissionRoutes(app);
   mountLeasesRoutes(app);
   mountRentRoutes(app);
   mountVendorsRoutes(app);

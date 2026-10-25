@@ -11,6 +11,7 @@ type NotificationKind =
   | "lease_expiring"
   | "work_order"
   | "signature"
+  | "payment_receipt"
   | "system";
 
 type NotificationRow = {
@@ -30,6 +31,7 @@ const KIND_LABEL: Record<NotificationKind | "all", string> = {
   lease_expiring: "Contratos",
   work_order: "Órdenes",
   signature: "Firma",
+  payment_receipt: "Comprobantes",
   system: "Sistema",
 };
 

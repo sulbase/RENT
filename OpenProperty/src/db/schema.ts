@@ -143,6 +143,12 @@ export const documentKindEnum = pgEnum("document_kind", [
   "other",
 ]);
 
+export const paymentSubmissionStatusEnum = pgEnum("payment_submission_status", [
+  "pending",
+  "approved",
+  "rejected",
+]);
+
 export const signaturePurposeEnum = pgEnum("signature_purpose", ["lease", "inventory"]);
 
 export const signatureProviderEnum = pgEnum("signature_provider", ["firma_dev"]);
@@ -926,6 +932,68 @@ export const documents = pgTable(
   ],
 );
 
+/**
+ * A transfer or deposit receipt sent from the tenant portal. It never moves the
+ * charge balance until a member approves it, which records a normal payment.
+ */
+export const paymentSubmissions = pgTable(
+  "payment_submissions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    tenantId: uuid("tenant_id").notNull(),
+    chargeId: uuid("charge_id").notNull(),
+    documentId: uuid("document_id").references(() => documents.id, { onDelete: "set null" }),
+    amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+    paidOn: date("paid_on").notNull(),
+    reference: text("reference"),
+    note: text("note"),
+    status: paymentSubmissionStatusEnum("status").notNull().default("pending"),
+    submittedBy: uuid("submitted_by"),
+    reviewedBy: uuid("reviewed_by"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    rejectionReason: text("rejection_reason"),
+    paymentId: uuid("payment_id").references(() => payments.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.organizationId],
+      foreignColumns: [tenants.id, tenants.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.chargeId, table.organizationId],
+      foreignColumns: [rentCharges.id, rentCharges.organizationId],
+    }).onDelete("cascade"),
+    index("idx_payment_submissions_org_status").on(table.organizationId, table.status),
+    index("idx_payment_submissions_tenant").on(table.tenantId),
+    index("idx_payment_submissions_charge").on(table.chargeId),
+    index("idx_payment_submissions_document").on(table.documentId),
+    index("idx_payment_submissions_payment").on(table.paymentId),
+    uniqueIndex("uq_payment_submissions_id_org").on(table.id, table.organizationId),
+    check("payment_submissions_amount", sql`${table.amount} > 0`),
+    check(
+      "payment_submissions_reference_len",
+      sql`${table.reference} IS NULL OR char_length(${table.reference}) BETWEEN 1 AND 120`,
+    ),
+    check(
+      "payment_submissions_note_len",
+      sql`${table.note} IS NULL OR char_length(${table.note}) BETWEEN 1 AND 500`,
+    ),
+    check(
+      "payment_submissions_review",
+      sql`(
+        (${table.status} = 'pending' AND ${table.reviewedAt} IS NULL AND ${table.rejectionReason} IS NULL)
+        OR (${table.status} = 'approved' AND ${table.reviewedAt} IS NOT NULL AND ${table.rejectionReason} IS NULL)
+        OR (${table.status} = 'rejected' AND ${table.reviewedAt} IS NOT NULL
+            AND char_length(${table.rejectionReason}) BETWEEN 1 AND 200)
+      )`,
+    ),
+  ],
+);
+
 export const leaseSignatures = pgTable(
   "lease_signatures",
   {
@@ -1000,6 +1068,7 @@ export const notificationKindEnum = pgEnum("notification_kind", [
   "lease_expiring",
   "work_order",
   "signature",
+  "payment_receipt",
   "system",
 ]);
 
@@ -1014,6 +1083,7 @@ export const notificationEntityTypeEnum = pgEnum("notification_entity_type", [
   "lease",
   "work_order",
   "lease_signature",
+  "payment_submission",
 ]);
 
 /**

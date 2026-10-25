@@ -22,6 +22,12 @@ export type MembershipInfo = {
   role: string;
 };
 
+/**
+ * `exists`: Supabase answers a sign-up for a registered email with a user that has no
+ * identities and sends no email, so the address cannot be probed.
+ */
+export type SignUpResult = "signed_in" | "confirm_email" | "exists";
+
 /** The tenant record this account opens in the portal. */
 export type PortalInfo = {
   tenant_id: string;
@@ -44,7 +50,7 @@ type AuthState = {
   profilePending: boolean;
   devBypass: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<SignUpResult>;
   signOut: () => Promise<void>;
   signOutEverywhere: () => Promise<void>;
   needsNewPassword: boolean;
@@ -185,23 +191,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await refreshProfile(data.session);
   }, [refreshProfile]);
 
-  const signUp = useCallback(async (email: string, password: string) => {
+  const signUp = useCallback(async (email: string, password: string): Promise<SignUpResult> => {
     const supabase = getSupabase();
     if (!supabase) throw new Error("Auth not configured");
-    const redirectTo = getEmailRedirectUrl();
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { emailRedirectTo: redirectTo },
+      options: { emailRedirectTo: getEmailRedirectUrl() },
     });
     if (error) throw error;
     if (data.session) {
       await refreshProfile(data.session);
-      return;
+      return "signed_in";
     }
-    throw new Error(
-      `Account created. Check your email to confirm, then sign in. The link will return to ${redirectTo}`,
-    );
+    if (data.user && data.user.identities?.length === 0) return "exists";
+    return "confirm_email";
   }, [refreshProfile]);
 
   const clearLocalSession = useCallback(() => {

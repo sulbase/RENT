@@ -4,21 +4,33 @@ import { apiBlob } from "@/api";
 import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDate, formatMoney } from "@/lib/utils";
-import { buildTenantLedger } from "../../../shared/tenant-ledger";
+import { buildTenantLedger, ledgerPlace, ledgerPlaces } from "../../../shared/tenant-ledger";
 import { usePortal } from "./portal-context";
+import { PortalPayables } from "./portal-payables";
 import type { PortalDocument, PortalLease } from "./portal-types";
 
 export function PortalHomePage() {
   const { home, settings } = usePortal();
   const [error, setError] = useState<string | null>(null);
+  const [unitFilter, setUnitFilter] = useState("all");
   const currency = settings.currency;
 
-  const ledger = useMemo(
-    () => buildTenantLedger({ charges: home?.charges ?? [], payments: home?.payments ?? [] }),
+  const places = useMemo(
+    () => ledgerPlaces([...(home?.charges ?? []), ...(home?.payments ?? [])]),
     [home],
   );
+  const selectedPlace = places.includes(unitFilter) ? unitFilter : "all";
+  const ledger = useMemo(() => {
+    const matches = <T extends { property_name?: string | null; unit_name?: string | null }>(row: T) =>
+      selectedPlace === "all" || ledgerPlace(row.property_name, row.unit_name) === selectedPlace;
+    return buildTenantLedger({
+      charges: (home?.charges ?? []).filter(matches),
+      payments: (home?.payments ?? []).filter(matches),
+    });
+  }, [home, selectedPlace]);
 
   if (!home) return null;
   const balance = ledger[0]?.balance ?? 0;
@@ -60,16 +72,33 @@ export function PortalHomePage() {
         )}
       </Card>
 
+      <PortalPayables />
+
       <Card className="p-5">
-        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-3">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-[1.0625rem] font-semibold leading-tight">Estado de cuenta</h2>
-          <div className="text-sm">
-            <span className="text-muted-foreground">Saldo </span>
-            <span
-              className={`font-semibold tabular-nums ${balance > 0 ? "text-destructive-solid" : ""}`}
-            >
-              {formatMoney(balance, currency)}
-            </span>
+          <div className="flex flex-wrap items-center gap-3">
+            {places.length > 1 ? (
+              <Select value={selectedPlace} onValueChange={setUnitFilter}>
+                <SelectTrigger className="w-64" aria-label="Propiedad o unidad">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas las propiedades</SelectItem>
+                  {places.map((place) => (
+                    <SelectItem key={place} value={place}>{place}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
+            <div className="text-sm">
+              <span className="text-muted-foreground">Saldo </span>
+              <span
+                className={`font-semibold tabular-nums ${balance > 0 ? "text-destructive-solid" : ""}`}
+              >
+                {formatMoney(balance, currency)}
+              </span>
+            </div>
           </div>
         </div>
         {ledger.length === 0 ? (

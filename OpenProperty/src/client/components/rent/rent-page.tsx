@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PaymentDialog } from "./payment-dialog";
+import { ReceiptReview } from "./receipt-review";
 import type { ChargeStatus, RentCharge } from "@/types";
 import { PageShell } from "@/components/page-shell";
 import { chargeStatusLabel } from "@/lib/labels";
@@ -128,6 +129,8 @@ export function RentPage() {
             tone={totals.overdue > 0 ? "danger" : "default"}
           />
         </section>
+
+        <ReceiptReview onChanged={load} />
 
         <div className="flex flex-wrap gap-2">
           <Select value={propertyFilter} onValueChange={setPropertyFilter}>

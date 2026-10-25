@@ -35,18 +35,17 @@ export function LoginPage() {
         setNotice("Si hay una cuenta con ese correo, enviamos un enlace para elegir una contraseña nueva.");
         return;
       }
-      if (mode === "signin") await signIn(email, password);
-      else {
-        try {
-          await signUp(email, password);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : "No se pudo crear la cuenta";
-          if (msg.includes("Check your email") || msg.includes("correo")) {
-            setNotice(msg);
-            return;
-          }
-          throw err;
-        }
+      if (mode === "signin") {
+        await signIn(email, password);
+        return;
+      }
+      const result = await signUp(email, password);
+      if (result === "exists") {
+        setMode("signin");
+        setPassword("");
+        setNotice("Ese correo ya tiene cuenta. Inicia sesión o usa ¿Olvidaste tu contraseña?");
+      } else if (result === "confirm_email") {
+        setNotice("Cuenta creada. Te enviamos un correo para confirmarla; ábrelo y después inicia sesión.");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo autenticar");

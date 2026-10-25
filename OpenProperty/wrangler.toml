@@ -6,8 +6,8 @@ compatibility_date = "2025-04-01"
 compatibility_flags = ["nodejs_compat"]
 
 # Landing estática en / y SPA en /app. Sin fallback global: /app/* lo resuelve el Worker.
-# El redirect de workers.dev permanece apagado hasta que rent.sulbase.com responda
-# y Supabase acepte https://rent.sulbase.com/app (el hash de auth no sobrevive un 301).
+# workers.dev redirige a rent.sulbase.com (CANONICAL_REDIRECT). Los correos de Supabase
+# ya vuelven a https://rent.sulbase.com/app, así que no pasan por ese 301.
 [assets]
 directory = "./dist"
 binding = "ASSETS"
@@ -41,7 +41,7 @@ custom_domain = true
 
 [vars]
 DEV_ORGANIZATION_SLUG = "dev"
-CANONICAL_REDIRECT = "false"
+CANONICAL_REDIRECT = "true"
 
 # Buzón: una pasada diaria a las 13:00 UTC (08:00 en UTC−5). El handler inserta lotes pequeños.
 [triggers]
