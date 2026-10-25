@@ -287,7 +287,11 @@ export function mountPaymentSubmissionRoutes(app: Hono<AppEnv>) {
     } catch {
       return c.json({ error: "Selecciona al menos un cargo" }, 400);
     }
-    if (chargeIds.length === 0 || chargeIds.length > 24 || chargeIds.some((id) => !z.string().uuid().safeParse(id).success)) {
+    if (
+      chargeIds.length === 0 ||
+      chargeIds.length > 24 ||
+      chargeIds.some((id) => !z.string().uuid().safeParse(id).success)
+    ) {
       return c.json({ error: "Selecciona los cargos a pagar" }, 400);
     }
     const fields = z
