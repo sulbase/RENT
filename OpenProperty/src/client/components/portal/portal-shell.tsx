@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AppNav, reportLocation, type AppNavItem } from "@clawnify/app/client";
 import { api } from "@/api";
 import { useAuth } from "@/hooks/use-auth";
 import { parseSettings } from "@/hooks/use-app-state";
@@ -9,22 +8,32 @@ import { PortalHomePage } from "./portal-home";
 import { PortalMaintenancePage } from "./portal-maintenance";
 import { PortalMailPage } from "./portal-mail";
 import { PortalSettingsPage } from "./portal-settings";
-import { AppNavSignOut } from "@/components/app-nav-sign-out";
+import { PortalPaymentsPage } from "./portal-payments";
+import { PortalDepartmentPage } from "./portal-department";
+import { PortalNav, type PortalNavId } from "./portal-nav";
 import type { PortalHome } from "./portal-types";
 
-type PortalRoute = "home" | "maintenance" | "mail" | "settings";
+type PortalRoute = PortalNavId;
 
 const HOME_PATH = "/portal";
 
 const ROUTE_PATH: Record<PortalRoute, string> = {
   home: HOME_PATH,
+  payments: "/portal/pagos",
+  department: "/portal/departamento",
   maintenance: "/portal/mantenimiento",
   mail: "/portal/correo",
   settings: "/portal/ajustes",
 };
 
-function parse(pathname: string): PortalRoute {
-  const path = internalFromLocation(pathname);
+function here(): string {
+  return window.location.pathname + window.location.search;
+}
+
+function parse(href: string): PortalRoute {
+  const path = internalFromLocation(href.split("?")[0] ?? href);
+  if (path === ROUTE_PATH.payments) return "payments";
+  if (path === ROUTE_PATH.department) return "department";
   if (path === ROUTE_PATH.maintenance) return "maintenance";
   if (path === ROUTE_PATH.mail) return "mail";
   if (path === ROUTE_PATH.settings) return "settings";
@@ -33,32 +42,33 @@ function parse(pathname: string): PortalRoute {
 
 export function PortalShell() {
   const auth = useAuth();
-  const [path, setPath] = useState(() => window.location.pathname);
+  const [location, setLocation] = useState(here);
   const [home, setHome] = useState<PortalHome | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const route = parse(path);
+  const route = parse(location);
+
+  useEffect(() => {
+    document.documentElement.classList.add("portal-theme");
+    return () => document.documentElement.classList.remove("portal-theme");
+  }, []);
 
   useEffect(() => {
     const internal = internalFromLocation(window.location.pathname);
     if (internal !== HOME_PATH && !internal.startsWith(`${HOME_PATH}/`)) {
       const href = toAppHref(HOME_PATH);
       window.history.replaceState(null, "", href);
-      setPath(href);
+      setLocation(href);
     }
-    const handler = () => setPath(window.location.pathname);
+    const handler = () => setLocation(here());
     window.addEventListener("popstate", handler);
     return () => window.removeEventListener("popstate", handler);
   }, []);
 
-  useEffect(() => {
-    reportLocation(path);
-  }, [path]);
-
   const navigate = useCallback((to: string) => {
     const href = toAppHref(to);
-    if (href === window.location.pathname) return;
+    if (href === here()) return;
     window.history.pushState(null, "", href);
-    setPath(href);
+    setLocation(href);
   }, []);
 
   const reload = useCallback(async () => {
@@ -76,41 +86,19 @@ export function PortalShell() {
   }, [reload]);
 
   const value = useMemo<PortalState>(
-    () => ({ home, settings: parseSettings(home?.settings ?? {}), reload }),
-    [home, reload],
+    () => ({ home, settings: parseSettings(home?.settings ?? {}), location, reload, navigate }),
+    [home, location, reload, navigate],
   );
-
-  const groups: { label?: string; items: AppNavItem[] }[] = [
-    {
-      items: [
-        { id: "home", label: "Inicio", href: toAppHref(ROUTE_PATH.home), home: true },
-        {
-          id: "maintenance",
-          label: "Mantenimiento",
-          href: toAppHref(ROUTE_PATH.maintenance),
-          icon: "list-checks",
-          color: "orange",
-        },
-        { id: "mail", label: "Correo", href: toAppHref(ROUTE_PATH.mail), icon: "mail", color: "blue" },
-        { id: "settings", label: "Ajustes", href: toAppHref(ROUTE_PATH.settings), icon: "settings" },
-      ],
-    },
-  ];
 
   return (
     <PortalContext.Provider value={value}>
       <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground md:flex-row">
-        <div className="flex shrink-0">
-          <AppNav
-            title="RENT"
-            icon="home"
-            groups={groups}
-            active={route}
-            onNavigate={(item) => navigate(item.href ?? ROUTE_PATH.home)}
-          >
-            <AppNavSignOut onSignOut={() => auth.signOut()} />
-          </AppNav>
-        </div>
+        <PortalNav
+          active={route}
+          leases={home?.leases ?? []}
+          onNavigate={(id) => navigate(ROUTE_PATH[id])}
+          onSignOut={() => void auth.signOut()}
+        />
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {error && !home ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 p-12 text-center">
@@ -124,6 +112,8 @@ export function PortalShell() {
           ) : (
             <>
               {route === "home" && <PortalHomePage />}
+              {route === "payments" && <PortalPaymentsPage />}
+              {route === "department" && <PortalDepartmentPage />}
               {route === "maintenance" && <PortalMaintenancePage />}
               {route === "mail" && <PortalMailPage />}
               {route === "settings" && <PortalSettingsPage />}

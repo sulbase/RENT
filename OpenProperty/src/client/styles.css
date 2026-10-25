@@ -423,6 +423,87 @@ aside.cn-nav .cn-nav-item[data-active] .cn-nav-count { color: var(--muted-foregr
   aside.cn-nav .cn-nav-item[data-active] { background: rgba(255, 255, 255, 0.06); }
 }
 
+/* Tenant portal stays on the dark ramp even when the OS is light. */
+html.portal-theme {
+  color-scheme: dark;
+  --background: #100f0e;
+  --foreground: #efeeed;
+  --card: #161615;
+  --card-foreground: #efeeed;
+  --popover: #161615;
+  --popover-foreground: #efeeed;
+  --muted: #222120;
+  --muted-foreground: #c0bdb9;
+  --faint: #82807c;
+  --border: #2e2e2c;
+  --input: #2e2e2c;
+  --primary: #efeeed;
+  --primary-foreground: #100f0e;
+  --secondary: #161615;
+  --secondary-foreground: #efeeed;
+  --accent: #222120;
+  --accent-foreground: #efeeed;
+  --brand: #3c9d55;
+  --brand-hover: #4bc06a;
+  --brand-tint: #1a2b1d;
+  --brand-text: #86db97;
+  --ring: #3c9d55;
+  --info: #b5c4e5;
+  --info-tint: #12234f;
+  --info-solid: #5580e8;
+  --success: #86da9e;
+  --success-tint: #1a2b1f;
+  --success-solid: #3c9c5d;
+  --warning: #e5bd7e;
+  --warning-tint: #2d2518;
+  --warning-solid: #a87e35;
+  --destructive: #e6b7b2;
+  --destructive-tint: #3b1c1a;
+  --destructive-solid: #e64243;
+  --sidebar: #161615;
+  --sidebar-foreground: #efeeed;
+  --sidebar-accent: rgba(255, 255, 255, 0.06);
+  --sidebar-accent-foreground: #efeeed;
+  --sidebar-border: #2e2e2c;
+  --edge-raised: inset 0 0 0 1px var(--border);
+  --edge-float: inset 0 0 0 1px var(--border);
+  --edge-solid: none;
+}
+
+aside.portal-nav {
+  background: var(--sidebar);
+  color: var(--foreground);
+  width: 100%;
+  max-height: 42vh;
+  border-bottom: 1px solid var(--sidebar-border);
+}
+aside.portal-nav .portal-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  padding: 0.85rem 1rem 0.65rem;
+  border-bottom: 1px solid var(--sidebar-border);
+}
+aside.portal-nav .cn-nav-item {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+aside.portal-nav .cn-nav-item:hover { background: rgba(255, 255, 255, 0.04); }
+aside.portal-nav .cn-nav-item[data-active] { background: rgba(255, 255, 255, 0.06); }
+@media (min-width: 768px) {
+  aside.portal-nav {
+    width: 275px;
+    max-height: none;
+    border-bottom: 0;
+    border-right: 1px solid var(--sidebar-border);
+  }
+}
+
 /* Agent mode (?agent / mode=agent sets data-agent on <html>): interactive
  * targets grow, and hover-only affordances become always-visible. */
 :root[data-agent] button,

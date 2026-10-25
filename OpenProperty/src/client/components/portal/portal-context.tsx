@@ -5,7 +5,9 @@ import type { PortalHome } from "./portal-types";
 export type PortalState = {
   home: PortalHome | null;
   settings: AppSettings;
+  location: string;
   reload: () => Promise<void>;
+  navigate: (to: string) => void;
 };
 
 export const PortalContext = createContext<PortalState | null>(null);

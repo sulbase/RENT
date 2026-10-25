@@ -23,6 +23,10 @@ export const settingsPatchSchema = z
     landlord_last_name: settingValue.optional(),
     landlord_email: settingValue.optional(),
     landlord_government_id: settingValue.optional(),
+    bank_holder: settingValue.optional(),
+    bank_name: settingValue.optional(),
+    bank_account: settingValue.optional(),
+    bank_clabe: settingValue.optional(),
   })
   .strict();
 

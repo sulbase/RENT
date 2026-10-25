@@ -16,7 +16,17 @@ import {
 import { parseJson } from "../validation";
 
 /** Organization preferences the portal needs to format money and dates. */
-const PORTAL_SETTING_KEYS = ["currency", "timezone", "language", "date_format", "area_unit"];
+const PORTAL_SETTING_KEYS = [
+  "currency",
+  "timezone",
+  "language",
+  "date_format",
+  "area_unit",
+  "bank_holder",
+  "bank_name",
+  "bank_account",
+  "bank_clabe",
+];
 
 const plainText = z
   .string()
