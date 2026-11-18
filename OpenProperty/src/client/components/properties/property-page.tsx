@@ -9,21 +9,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DocumentsPanel } from "@/components/documents/documents-panel";
-import { PropertyDialog } from "./property-dialog";
-import { UnitDialog } from "./unit-dialog";
-import { WorkOrderDialog } from "../maintenance/work-order-dialog";
-import { unitStatusLabel } from "@/lib/labels";
+import { priorityLabel, propertyTypeLabel, unitStatusLabel, workStatusLabel } from "@/lib/labels";
 import { unitTypeLabel } from "../../../shared/unit-types";
 import type { Property, Unit, WorkOrder } from "@/types";
 import { PageShell } from "@/components/page-shell";
-
-const TYPE_LABEL: Record<string, string> = {
-  single_family: "Single-family",
-  multi_family: "Multi-family",
-  condo: "Condo",
-  townhouse: "Townhouse",
-  commercial: "Commercial",
-};
 
 const STATUS_TONE: Record<string, string> = {
   vacant: "bg-warning-tint text-warning",
@@ -38,11 +27,6 @@ export function PropertyPage({ id, navigate }: { id: string; navigate: (to: stri
   const [units, setUnits] = useState<Unit[]>([]);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
-  const [editingProperty, setEditingProperty] = useState(false);
-  const [editingUnit, setEditingUnit] = useState<Unit | undefined>(undefined);
-  const [unitDialogOpen, setUnitDialogOpen] = useState(false);
-  const [woDialogOpen, setWoDialogOpen] = useState(false);
-
   async function load() {
     try {
       setLoading(true);
@@ -69,14 +53,14 @@ export function PropertyPage({ id, navigate }: { id: string; navigate: (to: stri
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center text-muted-foreground">
-        Loading property…
+        Cargando propiedad…
       </div>
     );
   }
   if (!property) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-muted-foreground">Property not found.</p>
+        <p className="text-sm text-muted-foreground">Propiedad no encontrada.</p>
         <Button variant="outline" onClick={() => navigate("/properties")}>Volver a propiedades</Button>
       </div>
     );
@@ -96,7 +80,7 @@ export function PropertyPage({ id, navigate }: { id: string; navigate: (to: stri
           className="inline-flex items-center gap-1.5 text-[1.375rem] font-semibold leading-tight tracking-[-0.01em] transition-colors duration-150 hover:text-muted-foreground"
         >
           <ArrowLeft className="size-4 text-muted-foreground" aria-hidden />
-          Properties
+          Propiedades
         </button>
       }
       width="max-w-7xl"
@@ -110,7 +94,7 @@ export function PropertyPage({ id, navigate }: { id: string; navigate: (to: stri
               <div className="flex items-center gap-2">
                 <h1 className="text-[1.375rem] font-semibold leading-tight tracking-[-0.01em]">{property.name}</h1>
                 <span className="rounded-full border bg-muted/30 px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                  {TYPE_LABEL[property.type] ?? property.type}
+                  {propertyTypeLabel(property.type)}
                 </span>
               </div>
               {(property.address || property.city) && (
@@ -121,8 +105,8 @@ export function PropertyPage({ id, navigate }: { id: string; navigate: (to: stri
               )}
             </div>
           </div>
-          <Button variant="outline" onClick={() => setEditingProperty(true)}>
-            <Pencil className="mr-1 h-4 w-4" /> Edit property
+          <Button variant="outline" onClick={() => navigate(`/properties/${property.id}/edit`)}>
+            <Pencil className="mr-1 h-4 w-4" /> Editar propiedad
           </Button>
         </header>
 
@@ -141,19 +125,19 @@ export function PropertyPage({ id, navigate }: { id: string; navigate: (to: stri
           <TabsContent value="general" className="space-y-6">
         <section>
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-[1.0625rem] font-semibold leading-tight">Units</h2>
-            <Button size="sm" onClick={() => { setEditingUnit(undefined); setUnitDialogOpen(true); }}>
-              <Plus className="mr-1 h-4 w-4" /> New unit
+            <h2 className="text-[1.0625rem] font-semibold leading-tight">Unidades</h2>
+            <Button size="sm" onClick={() => navigate(`/properties/${property.id}/units/new`)}>
+              <Plus className="mr-1 h-4 w-4" /> Nueva unidad
             </Button>
           </div>
           {units.length === 0 ? (
             <Card className="p-8 text-center text-sm text-muted-foreground">
-              No units yet. Add one to start tracking leases and rent.
+              Aún no hay unidades. Agrega una para llevar contratos y rentas.
             </Card>
           ) : (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
               {units.map((u) => (
-                <Card key={u.id} className="cursor-pointer p-4 transition-colors duration-150 hover:bg-muted" onClick={() => { setEditingUnit(u); setUnitDialogOpen(true); }}>
+                <Card key={u.id} className="cursor-pointer p-4 transition-colors duration-150 hover:bg-muted" onClick={() => navigate(`/properties/${property.id}/units/${u.id}/edit`)}>
                   <div className="flex items-start justify-between">
                     <div>
                       <h3 className="font-semibold">{u.name}</h3>
@@ -171,7 +155,7 @@ export function PropertyPage({ id, navigate }: { id: string; navigate: (to: stri
                   </div>
                   <div className="mt-3 flex items-end justify-between border-t pt-3">
                     <div>
-                      <div className="stat-label">Market rent</div>
+                      <div className="stat-label">Renta de mercado</div>
                       <div className="text-sm font-semibold tabular-nums">{formatMoney(u.market_rent, app.settings.currency)}</div>
                       {(u.aliquot_price ?? 0) > 0 && (
                         <div className="text-xs text-muted-foreground">
@@ -191,13 +175,13 @@ export function PropertyPage({ id, navigate }: { id: string; navigate: (to: stri
 
         <section>
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-[1.0625rem] font-semibold leading-tight">Work orders</h2>
-            <Button size="sm" variant="outline" onClick={() => setWoDialogOpen(true)}>
-              <Plus className="mr-1 h-4 w-4" /> New work order
+            <h2 className="text-[1.0625rem] font-semibold leading-tight">Órdenes de trabajo</h2>
+            <Button size="sm" variant="outline" onClick={() => navigate(`/properties/${property.id}/work-orders/new`)}>
+              <Plus className="mr-1 h-4 w-4" /> Nueva orden de trabajo
             </Button>
           </div>
           {workOrders.length === 0 ? (
-            <Card className="p-8 text-center text-sm text-muted-foreground">No work orders for this property.</Card>
+            <Card className="p-8 text-center text-sm text-muted-foreground">No hay órdenes de trabajo para esta propiedad.</Card>
           ) : (
             <Card className="divide-y">
               {workOrders.map((w) => (
@@ -212,8 +196,8 @@ export function PropertyPage({ id, navigate }: { id: string; navigate: (to: stri
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    <Badge variant="neutral" className="capitalize">{w.priority}</Badge>
-                    <Badge variant="secondary" className="capitalize">{w.status.replace("_", " ")}</Badge>
+                    <Badge variant="neutral">{priorityLabel(w.priority)}</Badge>
+                    <Badge variant="secondary">{workStatusLabel(w.status)}</Badge>
                   </div>
                 </div>
               ))}
@@ -226,22 +210,6 @@ export function PropertyPage({ id, navigate }: { id: string; navigate: (to: stri
           </TabsContent>
         </Tabs>
 
-      <PropertyDialog
-        open={editingProperty}
-        onOpenChange={(o) => { setEditingProperty(o); if (!o) load(); }}
-        property={property}
-      />
-      <UnitDialog
-        open={unitDialogOpen}
-        onOpenChange={(o) => { setUnitDialogOpen(o); if (!o) load(); }}
-        propertyId={property.id}
-        unit={editingUnit}
-      />
-      <WorkOrderDialog
-        open={woDialogOpen}
-        onOpenChange={(o) => { setWoDialogOpen(o); if (!o) load(); }}
-        defaults={{ property_id: property.id }}
-      />
     </PageShell>
   );
 }

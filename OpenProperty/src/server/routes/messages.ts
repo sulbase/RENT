@@ -61,6 +61,11 @@ const CreateBody = z
   });
 
 const ReplyBody = z.object({ body: plainText });
+const ReadBody = z.object({ message_id: z.string().uuid() });
+const MessageStateBody = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(50),
+  action: z.enum(["read", "unread", "hide"]),
+});
 
 const ListQuery = z.object({
   box: z.enum(["inbox", "sent"]).default("inbox"),
@@ -119,76 +124,111 @@ export function mountMessageRoutes(app: Hono<AppEnv>) {
     const parsed = parseQuery(c, ListQuery);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const userId = senderId(c);
-    if (!userId) return c.json({ threads: [], unread_count: 0 });
+    if (!userId) return c.json({ messages: [], unread_count: 0 });
     const org = orgId(c);
     const box = parsed.data.box ?? "inbox";
     const limit = parsed.data.limit ?? 50;
-    const threads = await query(
+    const rows = await query(
       c,
-      `SELECT t.id, t.subject, t.entity_type::text AS entity_type, t.entity_id,
-              t.created_at, t.last_message_at,
-              (
-                SELECT COUNT(*)::int FROM messages m
-                WHERE m.thread_id = t.id AND m.organization_id = t.organization_id
-                  AND m.sender_user_id IS DISTINCT FROM $2::uuid
-                  AND NOT EXISTS (
-                    SELECT 1 FROM message_reads r
-                    WHERE r.message_id = m.id AND r.user_id = $2::uuid
-                  )
-              ) AS unread_count
-       FROM message_threads t
-       WHERE t.organization_id = $1
+      `/* staff_mail */
+       SELECT m.id, m.thread_id, t.subject, m.body, m.created_at, m.sender_user_id,
+              COALESCE((
+                SELECT p.email FROM message_thread_participants p
+                WHERE p.thread_id = m.thread_id AND p.organization_id = m.organization_id
+                  AND p.user_id = m.sender_user_id
+                LIMIT 1
+              ), '') AS sender_email,
+              (m.sender_user_id = $2::uuid) AS mine,
+              (m.sender_user_id = $2::uuid OR EXISTS (
+                SELECT 1 FROM message_reads r
+                WHERE r.message_id = m.id AND r.user_id = $2::uuid
+              )) AS read
+       FROM messages m
+       JOIN message_threads t ON t.id = m.thread_id AND t.organization_id = m.organization_id
+       WHERE m.organization_id = $1
+         AND NOT EXISTS (
+           SELECT 1 FROM portal_message_hides h
+           WHERE h.message_id = m.id AND h.user_id = $2::uuid
+         )
          AND (
-           ($3 = 'inbox' AND EXISTS (
+           ($3 = 'inbox' AND m.sender_user_id IS DISTINCT FROM $2::uuid AND EXISTS (
              SELECT 1 FROM message_thread_participants p
              WHERE p.thread_id = t.id AND p.organization_id = t.organization_id
-               AND p.user_id = $2::uuid AND p.role IN ('to', 'cc')
+               AND p.user_id = $2::uuid
            ))
-           OR ($3 = 'sent' AND EXISTS (
-             SELECT 1 FROM messages m
-             WHERE m.thread_id = t.id AND m.organization_id = t.organization_id
-               AND m.sender_user_id = $2::uuid
-           ))
+           OR ($3 = 'sent' AND m.sender_user_id = $2::uuid)
          )
-       ORDER BY t.last_message_at DESC
+       ORDER BY m.created_at DESC
        LIMIT $4`,
       [org, userId, box, limit],
     );
-    const ids = threads.map((row) => String((row as { id: string }).id));
-    const participants = ids.length
-      ? await query(
-          c,
-          `SELECT thread_id, participant_kind, user_id, tenant_id, email, role
-           FROM message_thread_participants
-           WHERE organization_id = $1 AND thread_id = ANY($2::uuid[])
-           ORDER BY role, email`,
-          [org, ids],
-        )
-      : [];
     const unread = await get<{ n: number }>(
       c,
       `SELECT COUNT(*)::int AS n
        FROM messages m
        JOIN message_thread_participants p
          ON p.thread_id = m.thread_id AND p.organization_id = m.organization_id
-        AND p.user_id = $2::uuid AND p.role IN ('to', 'cc')
+        AND p.user_id = $2::uuid
        WHERE m.organization_id = $1
          AND m.sender_user_id IS DISTINCT FROM $2::uuid
          AND NOT EXISTS (
            SELECT 1 FROM message_reads r
            WHERE r.message_id = m.id AND r.user_id = $2::uuid
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM portal_message_hides h
+           WHERE h.message_id = m.id AND h.user_id = $2::uuid
          )`,
       [org, userId],
     );
     return c.json({
-      threads: normalizeRows(threads).map((thread) => ({
-        ...thread,
-        participants: normalizeRows(
-          participants.filter((row) => (row as { thread_id: string }).thread_id === thread.id),
-        ),
-      })),
+      messages: normalizeRows(rows),
       unread_count: Number(unread?.n ?? 0),
     });
+  });
+
+  app.post("/api/messages/state", async (c) => {
+    const userId = senderId(c);
+    if (!userId) return c.json({ error: "Not found" }, 404);
+    const parsed = await parseJson(c, MessageStateBody);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const org = orgId(c);
+    const ids = parsed.data.ids;
+    const visible = `m.organization_id = $1 AND m.id = ANY($3::uuid[]) AND EXISTS (
+      SELECT 1 FROM message_thread_participants p
+      WHERE p.thread_id = m.thread_id AND p.organization_id = m.organization_id
+        AND p.user_id = $2::uuid
+    )`;
+    if (parsed.data.action === "read") {
+      await run(
+        c,
+        `INSERT INTO message_reads (message_id, user_id, organization_id, read_at)
+         SELECT m.id, $2::uuid, m.organization_id, now()
+         FROM messages m
+         WHERE ${visible}
+         ON CONFLICT (message_id, user_id) DO NOTHING`,
+        [org, userId, ids],
+      );
+    } else if (parsed.data.action === "unread") {
+      await run(
+        c,
+        `DELETE FROM message_reads r
+         USING messages m
+         WHERE r.message_id = m.id AND r.user_id = $2::uuid AND ${visible}`,
+        [org, userId, ids],
+      );
+    } else {
+      await run(
+        c,
+        `INSERT INTO portal_message_hides (message_id, user_id, organization_id)
+         SELECT m.id, $2::uuid, m.organization_id
+         FROM messages m
+         WHERE ${visible}
+         ON CONFLICT (message_id, user_id) DO NOTHING`,
+        [org, userId, ids],
+      );
+    }
+    return c.json({ ok: true });
   });
 
   app.get("/api/messages/:id", async (c) => {
@@ -403,15 +443,22 @@ export function mountMessageRoutes(app: Hono<AppEnv>) {
       [id, org, userId],
     );
     if (!visible) return c.json({ error: "Not found" }, 404);
+    let messageId: string | null = null;
+    if ((c.req.header("content-type") ?? "").includes("application/json")) {
+      const parsed = await parseJson(c, ReadBody);
+      if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+      messageId = parsed.data.message_id;
+    }
     const result = await run(
       c,
       `INSERT INTO message_reads (message_id, user_id, organization_id, read_at)
        SELECT m.id, $3::uuid, m.organization_id, now()
        FROM messages m
        WHERE m.thread_id = $1 AND m.organization_id = $2
+         AND ($4::uuid IS NULL OR m.id = $4::uuid)
          AND m.sender_user_id IS DISTINCT FROM $3::uuid
        ON CONFLICT (message_id, user_id) DO NOTHING`,
-      [id, org, userId],
+      [id, org, userId, messageId],
     );
     return c.json({ updated: result.changes });
   });

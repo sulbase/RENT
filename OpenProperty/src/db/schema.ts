@@ -301,7 +301,7 @@ export const units = pgTable(
     status: unitStatusEnum("status").notNull().default("vacant"),
     /** Piso del edificio. Negativo para sótanos. */
     floor: integer("floor"),
-    /** Slug fijo (departamento, suite, local, parqueadero) o etiqueta extra de la organización. */
+    /** Slug fijo (departamento, suite, local) o etiqueta extra de la organización. */
     unitType: text("unit_type").notNull().default("departamento"),
     furnished: boolean("furnished").notNull().default(false),
     aliquotPrice: numeric("aliquot_price", { precision: 12, scale: 2 })
@@ -457,6 +457,10 @@ export const leases = pgTable(
     lateFee: numeric("late_fee", { precision: 12, scale: 2 })
       .notNull()
       .default("0"),
+    lateFeeGraceDays: integer("late_fee_grace_days"),
+    vehicleMonthlyFee: numeric("vehicle_monthly_fee", { precision: 12, scale: 2 })
+      .notNull()
+      .default("0"),
     status: leaseStatusEnum("status").notNull().default("active"),
     notes: text("notes"),
     metadata: jsonb("metadata").$type<JsonObject>().notNull().default({}),
@@ -478,6 +482,11 @@ export const leases = pgTable(
     index("idx_leases_tenant").on(table.primaryTenantId),
     index("idx_leases_org_status").on(table.organizationId, table.status),
     uniqueIndex("uq_leases_id_org").on(table.id, table.organizationId),
+    check("leases_vehicle_monthly_fee", sql`${table.vehicleMonthlyFee} >= 0`),
+    check(
+      "leases_late_fee_grace_days",
+      sql`${table.lateFeeGraceDays} IS NULL OR ${table.lateFeeGraceDays} BETWEEN 1 AND 5`,
+    ),
     uniqueIndex("uq_leases_open_unit")
       .on(table.organizationId, table.unitId)
       .where(sql`${table.status} in ('upcoming', 'active')`),
@@ -505,6 +514,69 @@ export const leaseTenants = pgTable(
   ],
 );
 
+export const tenantEmergencyContacts = pgTable(
+  "tenant_emergency_contacts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id").notNull(),
+    tenantId: uuid("tenant_id").notNull(),
+    name: text("name").notNull(),
+    relationship: text("relationship").notNull(),
+    phone: text("phone").notNull(),
+    hasAccess: boolean("has_access").notNull().default(false),
+    metadata: jsonb("metadata").$type<JsonObject>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.organizationId],
+      foreignColumns: [tenants.id, tenants.organizationId],
+    }).onDelete("cascade"),
+    index("idx_tenant_emergency_contacts_tenant").on(table.tenantId),
+    uniqueIndex("uq_tenant_emergency_contacts_id_org").on(table.id, table.organizationId),
+    check("tenant_emergency_contacts_name_len", sql`char_length(${table.name}) BETWEEN 1 AND 80`),
+    check(
+      "tenant_emergency_contacts_relationship_len",
+      sql`char_length(${table.relationship}) BETWEEN 1 AND 80`,
+    ),
+    check("tenant_emergency_contacts_phone_len", sql`char_length(${table.phone}) BETWEEN 1 AND 40`),
+  ],
+);
+
+export const tenantVehicles = pgTable(
+  "tenant_vehicles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: uuid("organization_id").notNull(),
+    tenantId: uuid("tenant_id").notNull(),
+    leaseId: uuid("lease_id").notNull(),
+    make: text("make").notNull().default(""),
+    model: text("model").notNull().default(""),
+    year: integer("year").notNull(),
+    color: text("color").notNull().default(""),
+    vehicleType: text("vehicle_type").notNull(),
+    plateState: text("plate_state").notNull(),
+    licenseNumber: text("license_number").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.tenantId, table.organizationId],
+      foreignColumns: [tenants.id, tenants.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.leaseId, table.organizationId],
+      foreignColumns: [leases.id, leases.organizationId],
+    }).onDelete("cascade"),
+    index("idx_tenant_vehicles_lease").on(table.leaseId),
+    uniqueIndex("uq_tenant_vehicles_id_org").on(table.id, table.organizationId),
+    check("tenant_vehicles_year", sql`${table.year} BETWEEN 1980 AND 2100`),
+    check("tenant_vehicles_type_len", sql`char_length(${table.vehicleType}) BETWEEN 1 AND 40`),
+    check("tenant_vehicles_plate_state_len", sql`char_length(${table.plateState}) BETWEEN 1 AND 40`),
+    check("tenant_vehicles_license_len", sql`char_length(${table.licenseNumber}) BETWEEN 1 AND 20`),
+  ],
+);
+
 export const rentCharges = pgTable(
   "rent_charges",
   {
@@ -520,6 +592,7 @@ export const rentCharges = pgTable(
       .notNull()
       .default("0"),
     status: rentChargeStatusEnum("status").notNull().default("open"),
+    kind: text("kind").notNull().default("rent"),
     notes: text("notes"),
     metadata: jsonb("metadata").$type<JsonObject>().notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -531,7 +604,8 @@ export const rentCharges = pgTable(
       columns: [table.leaseId, table.organizationId],
       foreignColumns: [leases.id, leases.organizationId],
     }).onDelete("cascade"),
-    uniqueIndex("idx_charges_lease_period").on(table.leaseId, table.period),
+    uniqueIndex("idx_charges_lease_period_kind").on(table.leaseId, table.period, table.kind),
+    check("rent_charges_kind", sql`${table.kind} in ('rent', 'parking')`),
     index("idx_charges_org_due").on(table.organizationId, table.dueDate),
     index("idx_charges_org_status").on(table.organizationId, table.status),
     uniqueIndex("uq_rent_charges_id_org").on(table.id, table.organizationId),
@@ -833,6 +907,27 @@ export const messageReads = pgTable(
   ],
 );
 
+/** A portal account can hide a message from its own inbox. Staff still see it. */
+export const portalMessageHides = pgTable(
+  "portal_message_hides",
+  {
+    messageId: uuid("message_id").notNull(),
+    userId: uuid("user_id").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    hiddenAt: timestamp("hidden_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.messageId, table.userId] }),
+    foreignKey({
+      columns: [table.messageId, table.organizationId],
+      foreignColumns: [messages.id, messages.organizationId],
+    }).onDelete("cascade"),
+    index("idx_portal_message_hides_user").on(table.organizationId, table.userId),
+  ],
+);
+
 /** Database ceiling. Lease photos allow 15 MiB; other uploads stay at 10 MiB in the route. */
 const MAX_DOCUMENT_BYTES = 15 * 1024 * 1024;
 
@@ -949,6 +1044,8 @@ export const paymentSubmissions = pgTable(
     amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
     paidOn: date("paid_on").notNull(),
     reference: text("reference"),
+    payerBankName: text("payer_bank_name"),
+    receiptNumber: text("receipt_number"),
     note: text("note"),
     status: paymentSubmissionStatusEnum("status").notNull().default("pending"),
     submittedBy: uuid("submitted_by"),
@@ -956,6 +1053,7 @@ export const paymentSubmissions = pgTable(
     reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
     rejectionReason: text("rejection_reason"),
     paymentId: uuid("payment_id").references(() => payments.id, { onDelete: "set null" }),
+    fillSource: text("fill_source").notNull().default("manual"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -975,6 +1073,10 @@ export const paymentSubmissions = pgTable(
     uniqueIndex("uq_payment_submissions_id_org").on(table.id, table.organizationId),
     check("payment_submissions_amount", sql`${table.amount} > 0`),
     check(
+      "payment_submissions_fill_source",
+      sql`${table.fillSource} IN ('manual', 'automatic')`,
+    ),
+    check(
       "payment_submissions_reference_len",
       sql`${table.reference} IS NULL OR char_length(${table.reference}) BETWEEN 1 AND 120`,
     ),
@@ -990,6 +1092,50 @@ export const paymentSubmissions = pgTable(
         OR (${table.status} = 'rejected' AND ${table.reviewedAt} IS NOT NULL
             AND char_length(${table.rejectionReason}) BETWEEN 1 AND 200)
       )`,
+    ),
+  ],
+);
+
+/** Gemini receipt reads used by one unit in one calendar month. */
+export const receiptReadQuotas = pgTable(
+  "receipt_read_quotas",
+  {
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    unitId: uuid("unit_id").notNull(),
+    period: text("period").notNull(),
+    calls: integer("calls").notNull().default(0),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organizationId, table.unitId, table.period] }),
+    foreignKey({
+      columns: [table.unitId, table.organizationId],
+      foreignColumns: [units.id, units.organizationId],
+    }).onDelete("cascade"),
+    check("receipt_read_quotas_period", sql`${table.period} ~ '^\\d{4}-\\d{2}$'`),
+    check("receipt_read_quotas_calls", sql`${table.calls} BETWEEN 0 AND 5`),
+  ],
+);
+
+/** One receipt number per organization. Several charge lines share the same document. */
+export const receiptNumberClaims = pgTable(
+  "receipt_number_claims",
+  {
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    receiptNumber: text("receipt_number").notNull(),
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organizationId, table.receiptNumber] }),
+    uniqueIndex("uq_receipt_number_claims_document").on(table.documentId),
+    check(
+      "receipt_number_claims_len",
+      sql`char_length(${table.receiptNumber}) BETWEEN 1 AND 80`,
     ),
   ],
 );
@@ -1065,6 +1211,7 @@ export const leaseSignatureRecipients = pgTable(
 export const notificationKindEnum = pgEnum("notification_kind", [
   "rent_due",
   "rent_overdue",
+  "rent_late_notice",
   "lease_expiring",
   "work_order",
   "signature",
@@ -1084,11 +1231,14 @@ export const notificationEntityTypeEnum = pgEnum("notification_entity_type", [
   "work_order",
   "lease_signature",
   "payment_submission",
+  "tenant",
 ]);
 
 /**
  * Org mailbox. `user_id` null means every member of the organization.
- * `period` is the logical bucket (charge period, lease end date, `unassigned`, signature event)
+ * A `rent_late_notice` is addressed to one tenant (`entity_type = tenant`) and is read in the portal.
+ * `period` is the logical bucket (charge period, lease end date, `unassigned`, signature event,
+ * or `1:YYYY-MM-DD` for a late notice stage and due date)
  * so a daily cron can insert with ON CONFLICT DO NOTHING.
  */
 export const notifications = pgTable(

@@ -39,7 +39,13 @@ const UploadFields = z.object({
 });
 
 const PUBLIC_COLUMNS = `id, entity_type, entity_id, kind, label, filename, mime, size_bytes, uploaded_by, is_cover, created_at`;
-const LEASE_UPLOAD_KINDS = new Set<DocumentKind>(["image", "invoice", "other", "inventory"]);
+const LEASE_UPLOAD_KINDS = new Set<DocumentKind>([
+  "image",
+  "invoice",
+  "other",
+  "inventory",
+  "signed_lease",
+]);
 const REQUEST_CAP_BYTES = MAX_PROPERTY_FILE_BYTES + 1024 * 1024;
 
 function targetIds(entityType: DocumentEntityType, entityId: string) {
@@ -202,14 +208,15 @@ export function mountDocumentsRoutes(app: Hono<AppEnv>) {
       return c.json(
         {
           error:
-            "En el contrato solo se admiten fotografías, facturas, un PDF de contrato o el inventario",
+            "En el contrato solo se admiten fotografías, facturas, un PDF de contrato, el contrato firmado o el inventario",
         },
         400,
       );
     }
     const leaseInventoryPdf = leaseUpload && fields.data.kind === "inventory";
     const leaseContractPdf = leaseUpload && fields.data.kind === "other" && !label;
-    const leaseSigningPdf = leaseInventoryPdf || leaseContractPdf;
+    const leaseSignedPdf = leaseUpload && fields.data.kind === "signed_lease";
+    const leaseSigningPdf = leaseInventoryPdf || leaseContractPdf || leaseSignedPdf;
     let storedLabel: string | null = null;
     if (leaseUpload && fields.data.kind === "other" && label) {
       const kinds = await leaseAttachmentKinds(c);

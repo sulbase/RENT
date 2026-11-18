@@ -24,7 +24,13 @@ import {
   parseLeaseAttachmentKinds,
   serializeLeaseAttachmentKinds,
 } from "../documents/lease-attachments";
+import { MAX_VEHICLES_PER_UNIT } from "../../shared/parking-charge";
 import { parseJson } from "../validation";
+
+/** Guarantee of `months` rents, rounded to cents. */
+export function guaranteeAmount(months: number, monthlyRent: number): number {
+  return Math.round(months * monthlyRent * 100) / 100;
+}
 
 export function mountLeasesRoutes(app: Hono<AppEnv>) {
   const LeaseInput = z.object({
@@ -34,8 +40,12 @@ export function mountLeasesRoutes(app: Hono<AppEnv>) {
     end_date: z.string(),
     monthly_rent: z.number().min(0).optional(),
     deposit: z.number().min(0).optional(),
-    rent_due_day: z.number().int().min(1).max(31).optional(),
+    /** Guarantee as months of rent; the server derives `deposit` from it. `null` means a fixed amount. */
+    guarantee_months: z.number().int().min(1).max(24).nullable().optional(),
+    rent_due_day: z.number().int().min(1).max(28).optional(),
     late_fee: z.number().min(0).optional(),
+    late_fee_grace_days: z.number().int().min(1).max(5).nullable().optional(),
+    vehicle_monthly_fee: z.number().min(0).optional(),
     status: z.enum(["upcoming", "active", "ended", "cancelled"]).optional(),
     notes: z.string().optional().nullable(),
   });
@@ -196,6 +206,95 @@ export function mountLeasesRoutes(app: Hono<AppEnv>) {
     return c.json({ lease: normalizeRow(row as Record<string, unknown>) });
   });
 
+  app.get("/api/leases/:id/vehicles", async (c) => {
+    const id = uuidParam(c.req.param("id"));
+    if (!id) return c.json({ error: "Invalid ID" }, 400);
+    const o = orgId(c);
+    const lease = await get(c, "SELECT id FROM leases WHERE id = $1 AND organization_id = $2", [
+      id,
+      o,
+    ]);
+    if (!lease) return c.json({ error: "Not found" }, 404);
+    const rows = await query(
+      c,
+      `SELECT id, year, make, model, color, vehicle_type, plate_state, license_number
+       FROM tenant_vehicles
+       WHERE organization_id = $1 AND lease_id = $2
+       ORDER BY created_at`,
+      [o, id],
+    );
+    return c.json({ vehicles: normalizeRows(rows) });
+  });
+
+  const VehicleInput = z.object({
+    make: z.string().trim().max(80).default(""),
+    model: z.string().trim().max(80).default(""),
+    year: z.number().int().min(1980).max(2100),
+    color: z.string().trim().max(40).default(""),
+    vehicle_type: z.enum(["Automóvil", "Motocicleta", "Camioneta", "SUV", "Otro"]),
+    plate_state: z.string().trim().min(1).max(40),
+    license_number: z.string().trim().min(1).max(20),
+  });
+
+  app.post("/api/leases/:id/vehicles", async (c) => {
+    const id = uuidParam(c.req.param("id"));
+    if (!id) return c.json({ error: "Invalid ID" }, 400);
+    const parsed = await parseJson(c, VehicleInput);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const o = orgId(c);
+    const lease = await get<{ primary_tenant_id: string | null }>(
+      c,
+      "SELECT primary_tenant_id FROM leases WHERE id = $1 AND organization_id = $2",
+      [id, o],
+    );
+    if (!lease) return c.json({ error: "Not found" }, 404);
+    if (!lease.primary_tenant_id) {
+      return c.json({ error: "El contrato no tiene inquilino" }, 409);
+    }
+    const d = parsed.data;
+    const row = await get(
+      c,
+      `INSERT INTO tenant_vehicles (
+         organization_id, tenant_id, lease_id, make, model, year, color,
+         vehicle_type, plate_state, license_number
+       ) SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+       WHERE (
+         SELECT COUNT(*) FROM tenant_vehicles
+         WHERE organization_id = $1 AND lease_id = $3
+       ) < ${MAX_VEHICLES_PER_UNIT}
+       RETURNING id, year, make, model, color, vehicle_type, plate_state, license_number`,
+      [
+        o,
+        lease.primary_tenant_id,
+        id,
+        d.make ?? "",
+        d.model ?? "",
+        d.year,
+        d.color ?? "",
+        d.vehicle_type,
+        d.plate_state,
+        d.license_number,
+      ],
+    );
+    if (!row) return c.json({ error: "Esta unidad ya tiene 3 vehículos" }, 409);
+    return c.json({ vehicle: normalizeRow(row as Record<string, unknown>) }, 201);
+  });
+
+  app.delete("/api/leases/:id/vehicles/:vehicleId", async (c) => {
+    const id = uuidParam(c.req.param("id"));
+    const vehicleId = uuidParam(c.req.param("vehicleId"));
+    if (!id || !vehicleId) return c.json({ error: "Invalid ID" }, 400);
+    const removed = await get(
+      c,
+      `DELETE FROM tenant_vehicles
+       WHERE id = $1 AND organization_id = $2 AND lease_id = $3
+       RETURNING id`,
+      [vehicleId, orgId(c), id],
+    );
+    if (!removed) return c.json({ error: "Not found" }, 404);
+    return c.json({ ok: true });
+  });
+
   app.post("/api/leases", async (c) => {
     const parsed = await parseJson(c, LeaseInput);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
@@ -208,12 +307,14 @@ export function mountLeasesRoutes(app: Hono<AppEnv>) {
     if (leaseHoldsUnit(status) && (await unitHeldByAnotherLease(c, o, d.unit_id))) {
       return c.json({ error: UNIT_TAKEN }, 409);
     }
+    const months = d.guarantee_months ?? null;
+    const deposit = months ? guaranteeAmount(months, d.monthly_rent ?? 0) : (d.deposit ?? 0);
     let inserted: { id: string } | undefined;
     try {
       inserted = await get<{ id: string }>(
         c,
-        `INSERT INTO leases (organization_id, unit_id, primary_tenant_id, start_date, end_date, monthly_rent, deposit, rent_due_day, late_fee, status, notes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+        `INSERT INTO leases (organization_id, unit_id, primary_tenant_id, start_date, end_date, monthly_rent, deposit, rent_due_day, late_fee, late_fee_grace_days, vehicle_monthly_fee, status, notes, metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb) RETURNING id`,
         [
           o,
           d.unit_id,
@@ -221,11 +322,14 @@ export function mountLeasesRoutes(app: Hono<AppEnv>) {
           d.start_date,
           d.end_date,
           String(d.monthly_rent ?? 0),
-          String(d.deposit ?? 0),
+          String(deposit),
           d.rent_due_day ?? 1,
           String(d.late_fee ?? 0),
+          d.late_fee_grace_days ?? null,
+          String(d.vehicle_monthly_fee ?? 0),
           status,
           d.notes ?? null,
+          JSON.stringify(months ? { guarantee_months: months } : {}),
         ],
       );
     } catch (err) {
@@ -247,9 +351,9 @@ export function mountLeasesRoutes(app: Hono<AppEnv>) {
     const parsed = await parseJson(c, LeaseInput.partial());
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
     const o = orgId(c);
-    const existing = await get<{ unit_id: string; status: string }>(
+    const existing = await get<{ unit_id: string; status: string; monthly_rent: string }>(
       c,
-      "SELECT unit_id, status FROM leases WHERE id = $1 AND organization_id = $2",
+      "SELECT unit_id, status, monthly_rent::text FROM leases WHERE id = $1 AND organization_id = $2",
       [id, o],
     );
     if (!existing) return c.json({ error: "Not found" }, 404);
@@ -262,12 +366,27 @@ export function mountLeasesRoutes(app: Hono<AppEnv>) {
     if (leaseHoldsUnit(nextStatus) && (await unitHeldByAnotherLease(c, o, nextUnit, id))) {
       return c.json({ error: UNIT_TAKEN }, 409);
     }
-    const data = { ...parsed.data };
+    const { guarantee_months: months, ...data } = parsed.data;
+    if (months) {
+      data.deposit = guaranteeAmount(months, data.monthly_rent ?? Number(existing.monthly_rent));
+    }
     if (data.monthly_rent !== undefined)
       data.monthly_rent = String(data.monthly_rent) as unknown as number;
     if (data.deposit !== undefined) data.deposit = String(data.deposit) as unknown as number;
     if (data.late_fee !== undefined) data.late_fee = String(data.late_fee) as unknown as number;
-    const { sets, params, next } = buildUpdate(data as Record<string, unknown>);
+    if (data.vehicle_monthly_fee !== undefined) {
+      data.vehicle_monthly_fee = String(data.vehicle_monthly_fee) as unknown as number;
+    }
+    const { sets, params, next: afterFields } = buildUpdate(data as Record<string, unknown>);
+    let next = afterFields;
+    if (months !== undefined) {
+      sets.push(
+        `metadata = CASE WHEN $${next}::int IS NULL THEN metadata - 'guarantee_months'
+          ELSE jsonb_set(metadata, '{guarantee_months}', to_jsonb($${next}::int)) END`,
+      );
+      params.push(months);
+      next += 1;
+    }
     if (!sets.length) return c.json({ error: "No fields" }, 400);
     params.push(id, o);
     let r: { changes: number };

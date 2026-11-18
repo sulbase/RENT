@@ -4,7 +4,7 @@ Supabase envía estos correos, no el Worker. Se pegan a mano en el dashboard: **
 
 | Plantilla en Supabase | Asunto | Archivo |
 |---|---|---|
-| Reset Password | `Restablece tu contraseña de RENT` | `reset-password.html` |
+| Reset Password | `Restablece tu contraseña` | `reset-password.html` |
 | Confirm signup | `Confirma tu cuenta de RENT` | `confirm-signup.html` |
 | Change Email Address | `Confirma tu nuevo correo en RENT` | `change-email.html` |
 

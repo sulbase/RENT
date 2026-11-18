@@ -413,6 +413,58 @@ describe("documents API isolation", () => {
     expect(overflow.status).toBe(409);
   });
 
+  it("stores a signed contract only as a PDF on a lease of the caller org", async () => {
+    const leaseA = "20000000-0000-4000-8000-000000000021";
+    const leaseB = "20000000-0000-4000-8000-000000000022";
+    const sql = createSql([
+      ...entities,
+      { type: "lease", id: leaseA, organization_id: ORG_A },
+      { type: "lease", id: leaseB, organization_id: ORG_B },
+    ]);
+    const bucket = createBucket();
+    const app = createApp(ORG_A, sql);
+    const env = { FILES: bucket as unknown as R2Bucket };
+    const signed = (leaseId: string, file: File) => {
+      const form = new FormData();
+      form.set("entity_type", "lease");
+      form.set("entity_id", leaseId);
+      form.set("kind", "signed_lease");
+      form.set("file", file);
+      return form;
+    };
+    const pdf = () =>
+      new File([Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d])], "firmado.pdf", {
+        type: "application/pdf",
+      });
+
+    const image = await app.request(
+      "/api/documents",
+      {
+        method: "POST",
+        body: signed(leaseA, new File([PNG_BYTES], "firmado.png", { type: "image/png" })),
+      },
+      env,
+    );
+    expect(image.status).toBe(400);
+
+    const foreign = await app.request(
+      "/api/documents",
+      { method: "POST", body: signed(leaseB, pdf()) },
+      env,
+    );
+    expect(foreign.status).toBe(404);
+
+    const created = await app.request(
+      "/api/documents",
+      { method: "POST", body: signed(leaseA, pdf()) },
+      env,
+    );
+    expect(created.status).toBe(201);
+    const body = (await created.json()) as { document: { kind: string; mime: string } };
+    expect(body.document.kind).toBe("signed_lease");
+    expect(body.document.mime).toBe("application/pdf");
+  });
+
   it("stops a property folder at 10 files", async () => {
     const sql = createSql(entities);
     const bucket = createBucket();

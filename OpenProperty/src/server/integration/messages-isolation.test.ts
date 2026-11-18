@@ -81,6 +81,26 @@ function createSql() {
   ];
 
   const unsafe = async (text: string, params: unknown[] = []) => {
+    if (text.includes("staff_mail")) {
+      const [org, userId, box] = params as [string, string, string];
+      return messages
+        .filter((row) => row.organization_id === org)
+        .filter((row) => {
+          const inThread = participants.some(
+            (participant) => participant.thread_id === row.thread_id && participant.user_id === userId,
+          );
+          if (box === "sent") return row.sender_user_id === userId;
+          return inThread && row.sender_user_id !== userId;
+        })
+        .map((row) => ({
+          ...row,
+          subject: threads.find((thread) => thread.id === row.thread_id)?.subject ?? "",
+          sender_email:
+            participants.find((participant) => participant.user_id === row.sender_user_id)?.email ?? "",
+          mine: row.sender_user_id === userId,
+          read: row.sender_user_id === userId,
+        }));
+    }
     if (text.includes("FROM message_threads t") && text.includes("LIMIT $4")) {
       const [org, userId, box] = params as [string, string, string];
       return threads
@@ -215,8 +235,8 @@ describe("API org isolation (messages)", () => {
     const res = await appFor(ORG_A, USER_A, sql).request(`/api/messages/${THREAD_B}`);
     expect(res.status).toBe(404);
     const list = await appFor(ORG_A, USER_A, sql).request("/api/messages?box=inbox");
-    const body = (await list.json()) as { threads: { id: string }[] };
-    expect(body.threads).toEqual([]);
+    const body = (await list.json()) as { messages: { id: string }[] };
+    expect(body.messages).toEqual([]);
   });
 
   it("rejects a reply to another organization's thread", async () => {

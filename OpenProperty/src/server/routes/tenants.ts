@@ -128,6 +128,59 @@ export function mountTenantsRoutes(app: Hono<AppEnv>) {
     return c.json({ tenant: normalizeRow(row as Record<string, unknown>) });
   });
 
+  app.get("/api/tenants/:id/household", async (c) => {
+    const id = uuidParam(c.req.param("id"));
+    if (!id) return c.json({ error: "Invalid ID" }, 400);
+    const o = orgId(c);
+    const tenant = await get(c, "SELECT id FROM tenants WHERE id = $1 AND organization_id = $2", [
+      id,
+      o,
+    ]);
+    if (!tenant) return c.json({ error: "Not found" }, 404);
+    const [contacts, vehicles] = await Promise.all([
+      query(
+        c,
+        `SELECT id, name, relationship, phone, metadata
+         FROM tenant_emergency_contacts
+         WHERE organization_id = $1 AND tenant_id = $2
+         ORDER BY created_at`,
+        [o, id],
+      ),
+      query(
+        c,
+        `SELECT v.id, v.lease_id, v.year, v.make, v.model, v.color, v.vehicle_type,
+                v.plate_state, v.license_number
+         FROM tenant_vehicles v
+         WHERE v.organization_id = $1 AND v.tenant_id = $2
+         ORDER BY v.created_at`,
+        [o, id],
+      ),
+    ]);
+    return c.json({
+      contacts: normalizeRows(contacts).map((row) => {
+        const meta =
+          row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+            ? (row.metadata as Record<string, unknown>)
+            : {};
+        const legacy = String(row.name ?? "")
+          .trim()
+          .split(/\s+/);
+        return {
+          id: row.id,
+          first_name: String(meta.first_name ?? legacy[0] ?? ""),
+          last_name: String(meta.last_name ?? legacy.slice(1).join(" ")),
+          relationship: row.relationship,
+          phone: String(
+            meta.phone_number
+              ? `${meta.phone_country ?? ""} ${meta.phone_number}`.trim()
+              : row.phone,
+          ),
+        };
+      }),
+      vehicles: normalizeRows(vehicles),
+    });
+  });
+
   app.get("/api/tenants/:id/payments", async (c) => {
     const id = uuidParam(c.req.param("id"));
     if (!id) return c.json({ error: "Invalid ID" }, 400);

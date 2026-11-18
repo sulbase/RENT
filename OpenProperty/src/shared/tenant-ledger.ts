@@ -7,6 +7,7 @@ export type LedgerCharge = {
   amount: number;
   status: string;
   period: string;
+  kind?: string | null;
   property_name?: string | null;
   unit_name?: string | null;
   lease_id?: string;
@@ -88,7 +89,7 @@ export function buildTenantLedger(input: {
       id: `charge:${charge.id}`,
       date: ledgerDate(charge.due_date),
       kind: "charge" as const,
-      typeLabel: `Renta ${charge.period}`,
+      typeLabel: `${charge.kind === "parking" ? "Estacionamiento" : "Renta"} ${charge.period}`,
       source: "owner" as const,
       place: ledgerPlace(charge.property_name, charge.unit_name),
       note: charge.status === "waived" ? "Condonado" : null,

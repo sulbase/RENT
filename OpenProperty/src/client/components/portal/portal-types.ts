@@ -32,14 +32,21 @@ export type PortalCharge = LedgerCharge & {
 export type PortalReceipt = {
   id: string;
   charge_id: string;
+  document_id: string | null;
   amount: number;
   paid_on: string;
   reference: string | null;
+  payer_bank_name: string | null;
+  receipt_number: string | null;
   status: "pending" | "approved" | "rejected";
   rejection_reason: string | null;
   created_at: string;
   reviewed_at: string | null;
   period: string;
+  payment_voided_at: string | null;
+  payment_void_reason: string | null;
+  document_filename: string | null;
+  document_mime: string | null;
 };
 
 export type PortalHome = {

@@ -38,7 +38,7 @@ export function MembersTab() {
   const [members, setMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [email, setEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<Role>("staff");
+  const [inviteRole, setInviteRole] = useState<Role>("viewer");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -60,7 +60,11 @@ export function MembersTab() {
     );
   }
 
-  const assignable: Role[] = role === "owner" ? ["owner", "manager", "staff", "viewer"] : ["manager", "staff", "viewer"];
+  const offered: Role[] = role === "owner" ? ["owner", "viewer"] : ["viewer"];
+  function roleOptions(current: Role | null): Role[] {
+    if (current && !offered.includes(current)) return [current, ...offered];
+    return offered;
+  }
 
   async function invite() {
     setBusy(true);
@@ -119,7 +123,7 @@ export function MembersTab() {
             <Select value={inviteRole} onValueChange={(v) => setInviteRole(v as Role)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                {assignable.map((value) => (
+                {roleOptions(null).map((value) => (
                   <SelectItem key={value} value={value}>{ROLE_LABEL[value]}</SelectItem>
                 ))}
               </SelectContent>
@@ -153,7 +157,7 @@ export function MembersTab() {
                   >
                     <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      {(locked ? (["owner"] as Role[]) : assignable).map((value) => (
+                      {(locked ? (["owner"] as Role[]) : roleOptions(member.role)).map((value) => (
                         <SelectItem key={value} value={value}>{ROLE_LABEL[value]}</SelectItem>
                       ))}
                     </SelectContent>

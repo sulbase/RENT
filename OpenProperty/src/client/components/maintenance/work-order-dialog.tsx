@@ -18,18 +18,18 @@ interface Props {
 }
 
 const PRIORITIES: { value: WorkOrderPriority; label: string }[] = [
-  { value: "low", label: "Low" },
+  { value: "low", label: "Baja" },
   { value: "normal", label: "Normal" },
-  { value: "high", label: "High" },
-  { value: "urgent", label: "Urgent" },
+  { value: "high", label: "Alta" },
+  { value: "urgent", label: "Urgente" },
 ];
 
 const STATUSES: { value: WorkOrderStatus; label: string }[] = [
-  { value: "open", label: "Open" },
-  { value: "assigned", label: "Assigned" },
-  { value: "in_progress", label: "In progress" },
-  { value: "completed", label: "Completed" },
-  { value: "cancelled", label: "Cancelled" },
+  { value: "open", label: "Abierta" },
+  { value: "assigned", label: "Asignada" },
+  { value: "in_progress", label: "En curso" },
+  { value: "completed", label: "Completada" },
+  { value: "cancelled", label: "Cancelada" },
 ];
 
 export function WorkOrderDialog({ open, onOpenChange, workOrder, defaults, onSaved }: Props) {
@@ -133,17 +133,17 @@ export function WorkOrderDialog({ open, onOpenChange, workOrder, defaults, onSav
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{workOrder ? "Edit work order" : "New work order"}</DialogTitle>
+          <DialogTitle>{workOrder ? "Editar orden de trabajo" : "Nueva orden de trabajo"}</DialogTitle>
         </DialogHeader>
 
         <div className="grid gap-3">
           <div>
-            <Label htmlFor="wo-title">Title</Label>
-            <Input id="wo-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Leaking kitchen faucet" />
+            <Label htmlFor="wo-title">Título</Label>
+            <Input id="wo-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Fuga en la llave de la cocina" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label>Property</Label>
+              <Label>Propiedad</Label>
               <Select value={String(propertyId || "")} onValueChange={(v) => { setPropertyId(v || ""); setUnitId(""); }}>
                 <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
                 <SelectContent>
@@ -154,7 +154,7 @@ export function WorkOrderDialog({ open, onOpenChange, workOrder, defaults, onSav
               </Select>
             </div>
             <div>
-              <Label>Unit</Label>
+              <Label>Unidad</Label>
               <Select value={String(unitId || "")} onValueChange={(v) => setUnitId(v || "")}>
                 <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
                 <SelectContent>
@@ -166,12 +166,12 @@ export function WorkOrderDialog({ open, onOpenChange, workOrder, defaults, onSav
             </div>
           </div>
           <div>
-            <Label htmlFor="wo-desc">Description</Label>
+            <Label htmlFor="wo-desc">Descripción</Label>
             <Textarea id="wo-desc" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <Label>Priority</Label>
+              <Label>Prioridad</Label>
               <Select value={priority} onValueChange={(v) => setPriority(v as WorkOrderPriority)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -180,7 +180,7 @@ export function WorkOrderDialog({ open, onOpenChange, workOrder, defaults, onSav
               </Select>
             </div>
             <div>
-              <Label>Status</Label>
+              <Label>Estado</Label>
               <Select value={status} onValueChange={(v) => setStatus(v as WorkOrderStatus)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -189,7 +189,7 @@ export function WorkOrderDialog({ open, onOpenChange, workOrder, defaults, onSav
               </Select>
             </div>
             <div>
-              <Label>Vendor</Label>
+              <Label>Proveedor</Label>
               <Select value={String(vendorId || "")} onValueChange={(v) => setVendorId(v || "")}>
                 <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
                 <SelectContent>
@@ -202,16 +202,16 @@ export function WorkOrderDialog({ open, onOpenChange, workOrder, defaults, onSav
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label htmlFor="wo-sched">Scheduled date</Label>
+              <Label htmlFor="wo-sched">Fecha programada</Label>
               <Input id="wo-sched" type="date" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
             </div>
             <div>
-              <Label htmlFor="wo-cost">Cost</Label>
+              <Label htmlFor="wo-cost">Costo</Label>
               <Input id="wo-cost" type="number" value={cost} onChange={(e) => setCost(e.target.value)} />
             </div>
           </div>
           <div>
-            <Label htmlFor="wo-notes">Notes</Label>
+            <Label htmlFor="wo-notes">Notas</Label>
             <Textarea id="wo-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
           </div>
         </div>
@@ -219,7 +219,7 @@ export function WorkOrderDialog({ open, onOpenChange, workOrder, defaults, onSav
         <DialogFooter className="mt-2">
           {workOrder && (
             <Button type="button" variant="destructive" className="sm:mr-auto" onClick={() => setConfirming(true)}>
-              Delete
+              Eliminar
             </Button>
           )}
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancelar</Button>
@@ -233,8 +233,8 @@ export function WorkOrderDialog({ open, onOpenChange, workOrder, defaults, onSav
       <ConfirmDelete
         open={confirming}
         onOpenChange={setConfirming}
-        title="Delete this work order?"
-        description="Its history and notes go with it. This cannot be undone."
+        title="¿Eliminar esta orden de trabajo?"
+        description="Se eliminan también su historial y notas. No se puede deshacer."
         onConfirm={remove}
       />
     </>

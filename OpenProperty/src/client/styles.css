@@ -423,7 +423,7 @@ aside.cn-nav .cn-nav-item[data-active] .cn-nav-count { color: var(--muted-foregr
   aside.cn-nav .cn-nav-item[data-active] { background: rgba(255, 255, 255, 0.06); }
 }
 
-/* Tenant portal stays on the dark ramp even when the OS is light. */
+/* Signed-in shells (equipo e inquilino) stay on the dark ramp even when the OS is light. */
 html.portal-theme {
   color-scheme: dark;
   --background: #100f0e;
@@ -468,6 +468,33 @@ html.portal-theme {
   --edge-raised: inset 0 0 0 1px var(--border);
   --edge-float: inset 0 0 0 1px var(--border);
   --edge-solid: none;
+  --cat-sky-tint: #1a2930;
+  --cat-sky-text: #9bcce5;
+  --cat-sky-solid: #3b91b6;
+  --cat-emerald-tint: #1a2b1f;
+  --cat-emerald-text: #86da9e;
+  --cat-emerald-solid: #3c9c5d;
+  --cat-amber-tint: #2d2518;
+  --cat-amber-text: #e5bd7e;
+  --cat-amber-solid: #a87e35;
+  --cat-rose-tint: #3b1c1f;
+  --cat-rose-text: #e6b6b8;
+  --cat-rose-solid: #e4415e;
+  --cat-violet-tint: #271f45;
+  --cat-violet-text: #c3bfe5;
+  --cat-violet-solid: #876ee8;
+  --cat-fuchsia-tint: #341c36;
+  --cat-fuchsia-text: #e3b0e5;
+  --cat-fuchsia-solid: #c741d1;
+  --cat-teal-tint: #1a2a28;
+  --cat-teal-text: #86d5cb;
+  --cat-teal-solid: #3c978d;
+  --cat-orange-tint: #322318;
+  --cat-orange-text: #e6ba9d;
+  --cat-orange-solid: #be7035;
+  --cat-slate-tint: #222120;
+  --cat-slate-text: #c0bdb9;
+  --cat-slate-solid: #82807c;
 }
 
 aside.portal-nav {
@@ -487,11 +514,20 @@ aside.portal-nav .portal-brand {
   border-bottom: 1px solid var(--sidebar-border);
 }
 aside.portal-nav .cn-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 2rem;
   background: transparent;
   border: 0;
   cursor: pointer;
   text-align: left;
   width: 100%;
+}
+aside.portal-nav .cn-nav-item svg {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 1rem;
 }
 aside.portal-nav .cn-nav-item:hover { background: rgba(255, 255, 255, 0.04); }
 aside.portal-nav .cn-nav-item[data-active] { background: rgba(255, 255, 255, 0.06); }

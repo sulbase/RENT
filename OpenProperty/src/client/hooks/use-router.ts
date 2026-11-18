@@ -8,9 +8,15 @@ export type Route =
   | { name: "dashboard" }
   | { name: "properties" }
   | { name: "property"; id: string }
+  | { name: "property-edit"; id: string }
+  | { name: "unit-new"; propertyId: string }
+  | { name: "unit-edit"; propertyId: string; unitId: string }
+  | { name: "work-order-new"; propertyId: string }
   | { name: "tenants" }
   | { name: "tenant"; id: string }
+  | { name: "tenant-edit"; id: string }
   | { name: "leases" }
+  | { name: "lease-edit"; id: string }
   | { name: "rent" }
   | { name: "maintenance" }
   | { name: "messages" }
@@ -23,10 +29,22 @@ function parse(path: string): Route {
   if (path === "/properties") return { name: "properties" };
   let m = path.match(new RegExp(`^/properties/(${UUID_SEGMENT})$`, "i"));
   if (m) return { name: "property", id: m[1] };
+  m = path.match(new RegExp(`^/properties/(${UUID_SEGMENT})/edit$`, "i"));
+  if (m) return { name: "property-edit", id: m[1] };
+  m = path.match(new RegExp(`^/properties/(${UUID_SEGMENT})/units/new$`, "i"));
+  if (m) return { name: "unit-new", propertyId: m[1] };
+  m = path.match(new RegExp(`^/properties/(${UUID_SEGMENT})/units/(${UUID_SEGMENT})/edit$`, "i"));
+  if (m) return { name: "unit-edit", propertyId: m[1], unitId: m[2] };
+  m = path.match(new RegExp(`^/properties/(${UUID_SEGMENT})/work-orders/new$`, "i"));
+  if (m) return { name: "work-order-new", propertyId: m[1] };
   if (path === "/tenants") return { name: "tenants" };
   m = path.match(new RegExp(`^/tenants/(${UUID_SEGMENT})$`, "i"));
   if (m) return { name: "tenant", id: m[1] };
+  m = path.match(new RegExp(`^/tenants/(${UUID_SEGMENT})/edit$`, "i"));
+  if (m) return { name: "tenant-edit", id: m[1] };
   if (path === "/leases") return { name: "leases" };
+  m = path.match(new RegExp(`^/leases/(${UUID_SEGMENT})/edit$`, "i"));
+  if (m) return { name: "lease-edit", id: m[1] };
   if (path === "/rent") return { name: "rent" };
   if (path === "/maintenance") return { name: "maintenance" };
   if (path === "/messages") return { name: "messages" };

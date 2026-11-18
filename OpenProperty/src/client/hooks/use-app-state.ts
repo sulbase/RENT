@@ -16,6 +16,7 @@ import type {
   NewWorkOrder,
   NewVendor,
 } from "../types";
+import { clampRentDueDay } from "../../shared/rent-due-day";
 
 export interface AppSettings {
   default_rent_due_day: number;
@@ -67,7 +68,9 @@ export function parseSettings(raw: Record<string, string>): AppSettings {
       : "dd/MM/yyyy";
   const areaUnit = raw.area_unit === "ft2" ? "ft2" : "m2";
   const parsed: AppSettings = {
-    default_rent_due_day: num("default_rent_due_day", DEFAULT_SETTINGS.default_rent_due_day),
+    default_rent_due_day: clampRentDueDay(
+      num("default_rent_due_day", DEFAULT_SETTINGS.default_rent_due_day),
+    ),
     late_fee_amount: num("late_fee_amount", DEFAULT_SETTINGS.late_fee_amount),
     late_fee_grace_days: num("late_fee_grace_days", DEFAULT_SETTINGS.late_fee_grace_days),
     currency: raw.currency || DEFAULT_SETTINGS.currency,

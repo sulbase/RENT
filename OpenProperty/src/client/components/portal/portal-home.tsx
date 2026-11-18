@@ -1,23 +1,20 @@
 import { useState } from "react";
-import { Info } from "lucide-react";
+import { Files, Info, Smartphone, Wrench } from "lucide-react";
 import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import { formatMoney, formatPeriod } from "@/lib/utils";
-import { usePortal } from "./portal-context";
+import { cn, formatDate, formatMoney, formatPeriod } from "@/lib/utils";
+import { chargeConcept } from "../../../shared/parking-charge";
+import { PORTAL_MAIL_COMPOSE_HREF, usePortal } from "./portal-context";
+import {
+  balanceOf,
+  cutoffIso,
+  cutoffIsPast,
+  openCharges,
+} from "./portal-lease-balance";
 import type { PortalCharge, PortalLease } from "./portal-types";
-
-function balanceOf(charge: PortalCharge): number {
-  return Math.max(0, Math.round((charge.amount - (charge.amount_paid ?? 0)) * 100) / 100);
-}
-
-function openCharges(charges: PortalCharge[], leaseId: string): PortalCharge[] {
-  return charges
-    .filter((charge) => charge.lease_id === leaseId && charge.status !== "paid" && charge.status !== "waived" && balanceOf(charge) > 0)
-    .sort((a, b) => (a.due_date < b.due_date ? -1 : 1));
-}
 
 export function PortalHomePage() {
   const { home, settings, navigate } = usePortal();
@@ -36,6 +33,8 @@ export function PortalHomePage() {
           {home.leases.map((lease) => {
             const lines = openCharges(home.charges, lease.id);
             const total = lines.reduce((sum, charge) => sum + balanceOf(charge), 0);
+            const cutoff = cutoffIso(lease, home.charges);
+            const cutoffPast = cutoffIsPast(cutoff);
             return (
               <Card key={lease.id} className="p-5">
                 <p className="text-sm font-medium">{lease.unit_name ?? "Unidad"}</p>
@@ -45,7 +44,7 @@ export function PortalHomePage() {
                       Monto adeudado
                       <button
                         type="button"
-                        className="inline-flex size-5 items-center justify-center rounded-full text-info-solid"
+                        className="inline-flex size-5 cursor-pointer items-center justify-center rounded-full text-info-solid"
                         aria-label="Detalles del saldo"
                         onClick={() => setDetail(lease)}
                       >
@@ -53,6 +52,14 @@ export function PortalHomePage() {
                       </button>
                     </div>
                     <p className="mt-1 text-2xl font-semibold tabular-nums">{formatMoney(total, currency)}</p>
+                    <p
+                      className={cn(
+                        "mt-1 text-sm font-medium",
+                        cutoffPast ? "text-destructive-solid" : "text-success",
+                      )}
+                    >
+                      Fecha de corte: {formatDate(cutoff)}
+                    </p>
                   </div>
                   <Button type="button" onClick={() => navigate(`/portal/pagos?lease=${lease.id}`)}>
                     Pagar ahora
@@ -61,6 +68,38 @@ export function PortalHomePage() {
               </Card>
             );
           })}
+          <section className="pt-2">
+            <h2 className="mb-6 text-xl font-semibold">Enlaces rápidos</h2>
+            <div className="grid max-w-2xl grid-cols-3 gap-4 sm:gap-8">
+              <QuickLink
+                icon={Wrench}
+                label="Solicitar mantenimiento"
+                onClick={() => {
+                  const lease = home.leases.length === 1 ? home.leases[0] : null;
+                  navigate(
+                    lease
+                      ? `/portal/departamento/mantenimiento/nuevo?lease=${lease.id}`
+                      : "/portal/departamento",
+                  );
+                }}
+              />
+              <QuickLink
+                icon={Smartphone}
+                label="Comuníquese con nosotros"
+                onClick={() => navigate(PORTAL_MAIL_COMPOSE_HREF)}
+              />
+              <QuickLink
+                icon={Files}
+                label="Ver documentos"
+                onClick={() => {
+                  const lease = home.leases.length === 1 ? home.leases[0] : null;
+                  navigate(
+                    lease ? `/portal/departamento/documentos?lease=${lease.id}` : "/portal/departamento",
+                  );
+                }}
+              />
+            </div>
+          </section>
         </div>
       )}
 
@@ -76,14 +115,28 @@ export function PortalHomePage() {
               unit={detail.unit_name}
             />
           )}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setDetail(null)}>
-              Cerrar
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </PageShell>
+  );
+}
+
+function QuickLink({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: typeof Wrench;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button type="button" className="flex cursor-pointer flex-col items-center gap-3 text-center" onClick={onClick}>
+      <span className="flex size-16 items-center justify-center rounded-full bg-[#3a3937] text-foreground">
+        <Icon className="size-7" strokeWidth={1.5} aria-hidden />
+      </span>
+      <span className="max-w-[8rem] text-sm leading-snug">{label}</span>
+    </button>
   );
 }
 
@@ -106,7 +159,9 @@ function BalanceDetail({
         <ul className="space-y-2 text-sm">
           {charges.map((charge) => (
             <li key={charge.id} className="flex items-baseline justify-between gap-3">
-              <span className="capitalize">Renta de {formatPeriod(charge.period)}</span>
+              <span className="capitalize">
+                {chargeConcept(charge.kind)} de {formatPeriod(charge.period)}
+              </span>
               <span className="tabular-nums">{formatMoney(balanceOf(charge), currency)}</span>
             </li>
           ))}

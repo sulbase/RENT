@@ -17,6 +17,8 @@ export type WorkerBindings = {
   FIRMA_API_KEY?: string;
   /** Secreto HMAC de los webhooks de firma.dev. */
   FIRMA_WEBHOOK_SECRET?: string;
+  /** Google AI Studio key for gemini-3.5-flash-lite. Never sent to the client. */
+  GEMINI_API_KEY?: string;
   /** "true" sends the lab workers.dev host to https://rent.sulbase.com. */
   CANONICAL_REDIRECT?: string;
   /** Private R2 bucket. Downloads always go through the Worker. */

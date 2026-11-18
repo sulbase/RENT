@@ -99,6 +99,76 @@
       "when": 1792888527344,
       "tag": "0013_payment_submissions",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792892000000,
+      "tag": "0014_tenant_household",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1792895600000,
+      "tag": "0015_portal_message_hides",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792899200000,
+      "tag": "0016_emergency_contact_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792902800000,
+      "tag": "0017_payment_submission_payer",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792906400000,
+      "tag": "0018_rent_late_notices",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792910000000,
+      "tag": "0019_vehicle_parking_charges",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792913600000,
+      "tag": "0020_lease_late_fee_grace",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792917200000,
+      "tag": "0021_receipt_read_quotas",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792920800000,
+      "tag": "0022_payment_submission_fill_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792924400000,
+      "tag": "0023_receipt_number_claims",
+      "breakpoints": true
     }
   ]
 }

@@ -2,11 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { FileText, ImageIcon, Star, Trash2, Upload } from "lucide-react";
 import { api, apiBlob, apiForm } from "@/api";
 import { useApp } from "@/context";
-import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { DocumentEntityType, DocumentKind, PropertyDocument } from "@/types";
@@ -78,17 +76,13 @@ export function DocumentsPanel({
   hideEmptyState?: boolean;
 }) {
   const app = useApp();
-  const { role } = useAuth();
   const leaseAttachments = variant === "lease";
   const unitPhotos = entityType === "unit";
   const propertyFolder = entityType === "property";
   const cappedImagePhotos = leaseAttachments || unitPhotos;
   const imagesOnlyUpload = leaseAttachments || unitPhotos;
-  const canEditKinds = role === "owner" || role === "manager" || role === "staff";
   const [documents, setDocuments] = useState<PropertyDocument[]>([]);
   const [usage, setUsage] = useState<ListResponse["usage"] | null>(null);
-  const [extraKinds, setExtraKinds] = useState<string[]>([]);
-  const [draftKind, setDraftKind] = useState("");
   const [kind, setKind] = useState("image");
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -141,21 +135,6 @@ export function DocumentsPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entityType, entityId]);
 
-  useEffect(() => {
-    if (!leaseAttachments) return;
-    let cancelled = false;
-    void api<{ kinds: string[] }>("GET", "/api/leases/attachment-kinds")
-      .then((data) => {
-        if (!cancelled) setExtraKinds(data.kinds);
-      })
-      .catch((err: Error) => {
-        if (!cancelled) app.setError(err.message);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [leaseAttachments, app.setError]);
-
   async function refresh() {
     const docs = await load();
     if (entityType === "property") {
@@ -179,33 +158,6 @@ export function DocumentsPanel({
       return next;
     });
     return created;
-  }
-
-  async function addKind() {
-    const label = draftKind.trim().replace(/\s+/g, " ");
-    if (!label) return;
-    try {
-      const data = await api<{ kinds: string[] }>("PUT", "/api/leases/attachment-kinds", {
-        kinds: [...extraKinds, label],
-      });
-      setExtraKinds(data.kinds);
-      setKind(`other:${label}`);
-      setDraftKind("");
-    } catch (err) {
-      app.setError((err as Error).message);
-    }
-  }
-
-  async function removeKind(label: string) {
-    try {
-      const data = await api<{ kinds: string[] }>("PUT", "/api/leases/attachment-kinds", {
-        kinds: extraKinds.filter((item) => item !== label),
-      });
-      setExtraKinds(data.kinds);
-      if (kind === `other:${label}`) setKind("image");
-    } catch (err) {
-      app.setError((err as Error).message);
-    }
   }
 
   async function uploadFiles(files: File[]) {
@@ -256,8 +208,8 @@ export function DocumentsPanel({
       app.setError("Cada fotografía puede pesar como máximo 15 MB");
       return;
     }
-    const uploadKind = unitPhotos ? "image" : kind.startsWith("other:") ? "other" : kind;
-    const label = kind.startsWith("other:") ? kind.slice("other:".length) : "";
+    const uploadKind = imagesOnlyUpload ? "image" : kind.startsWith("other:") ? "other" : kind;
+    const label = !imagesOnlyUpload && kind.startsWith("other:") ? kind.slice("other:".length) : "";
     setUploading(true);
     try {
       let coverAssigned = documents.some((doc) => doc.kind === "image");
@@ -269,7 +221,7 @@ export function DocumentsPanel({
         form.set("kind", fileKind);
         form.set("file", file);
         if (!propertyFolder && label) form.set("label", label);
-        if (fileKind === "image" && !coverAssigned) {
+        if (fileKind === "image" && !coverAssigned && !leaseAttachments) {
           form.set("is_cover", "true");
           coverAssigned = true;
         }
@@ -356,7 +308,6 @@ export function DocumentsPanel({
     <section
       className={cn(
         "space-y-4",
-        leaseAttachments && "border-t pt-3",
         propertyFolder && dragOver && "rounded-lg bg-muted",
       )}
       onDragOver={
@@ -388,13 +339,13 @@ export function DocumentsPanel({
       <div
         className={cn(
           "flex flex-wrap gap-3",
-          unitPhotos || propertyFolder ? "flex-col" : "items-end justify-between",
+          imagesOnlyUpload || propertyFolder ? "flex-col" : "items-end justify-between",
         )}
       >
         {!propertyFolder && (
         <div>
           <h2 className="text-[1.0625rem] font-semibold leading-tight">
-            {leaseAttachments ? "Archivos Adjuntos" : unitPhotos ? "Fotografías" : "Documentos"}
+            {leaseAttachments ? "Imágenes" : unitPhotos ? "Fotografías" : "Documentos"}
           </h2>
           <p className="mt-1 text-xs text-muted-foreground">
             {leaseAttachments
@@ -405,66 +356,20 @@ export function DocumentsPanel({
           </p>
         </div>
         )}
-        {!unitPhotos && !propertyFolder && (
+        {!imagesOnlyUpload && !propertyFolder && (
         <div className="w-56">
           <Select value={kind} onValueChange={setKind}>
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {(leaseAttachments ? KINDS.filter((item) => item.value === "image" || item.value === "invoice") : KINDS).map(
-                (item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ),
-              )}
-              {leaseAttachments &&
-                extraKinds.map((label) => (
-                  <SelectItem key={label} value={`other:${label}`}>
-                    {label}
-                  </SelectItem>
-                ))}
-              {leaseAttachments && canEditKinds && (
-                <div className="border-t p-2" onKeyDown={(event) => event.stopPropagation()}>
-                  <div className="flex gap-1">
-                    <Input
-                      value={draftKind}
-                      placeholder="Nueva opción"
-                      maxLength={40}
-                      onChange={(event) => setDraftKind(event.target.value)}
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onKeyDown={(event) => {
-                        event.stopPropagation();
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void addKind();
-                        }
-                      }}
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      onPointerDown={(event) => event.preventDefault()}
-                      onClick={() => void addKind()}
-                    >
-                      Añadir
-                    </Button>
-                  </div>
-                </div>
-              )}
+              {KINDS.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
-          {leaseAttachments && canEditKinds && kind.startsWith("other:") && (
-            <button
-              type="button"
-              className="mt-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
-              onClick={() => void removeKind(kind.slice("other:".length))}
-            >
-              Quitar esta opción de la organización
-            </button>
-          )}
         </div>
         )}
         {propertyFolder && (
@@ -515,7 +420,7 @@ export function DocumentsPanel({
         <span>
           {uploading
             ? "Subiendo…"
-            : unitPhotos
+            : imagesOnlyUpload
               ? "Arrastra fotografías o haz clic para elegirlas"
               : "Arrastra archivos o haz clic para elegirlos"}
         </span>
@@ -540,15 +445,19 @@ export function DocumentsPanel({
       {loading ? (
         <Card className="p-8 text-center text-sm text-muted-foreground">
           {leaseAttachments
-            ? "Cargando archivos…"
+            ? "Cargando imágenes…"
             : unitPhotos
               ? "Cargando fotografías…"
               : "Cargando documentos…"}
         </Card>
-      ) : documents.length === 0 ? (
+      ) : (leaseAttachments ? images.length : documents.length) === 0 ? (
         hideEmptyState ? null : (
           <Card className="p-8 text-center text-sm text-muted-foreground">
-            {leaseAttachments ? "Todavía no hay archivos adjuntos." : "Todavía no hay documentos."}
+            {leaseAttachments
+              ? "Todavía no hay imágenes."
+              : unitPhotos
+                ? "Todavía no hay fotografías."
+                : "Todavía no hay documentos."}
           </Card>
         )
       ) : propertyFolder ? (
@@ -607,7 +516,7 @@ export function DocumentsPanel({
         </Card>
       ) : (
         <>
-          {cover && previews[cover.id] && (
+          {!leaseAttachments && cover && previews[cover.id] && (
             <Card className="overflow-hidden">
               <img src={previews[cover.id]} alt={cover.filename} className="max-h-64 w-full object-cover" />
               <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-muted-foreground">
@@ -633,18 +542,20 @@ export function DocumentsPanel({
                       className="min-w-0 truncate text-left text-xs"
                       onClick={() => download(doc)}
                     >
-                      {leaseAttachments ? `${kindName(doc)} · ${doc.filename}` : doc.filename}
+                      {doc.filename}
                     </button>
                     <div className="flex shrink-0">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={doc.is_cover ? "secondary" : "ghost"}
-                        aria-label="Usar como portada"
-                        onClick={() => makeCover(doc.id)}
-                      >
-                        <Star className={cn("size-3.5", doc.is_cover && "fill-current")} />
-                      </Button>
+                      {!leaseAttachments && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={doc.is_cover ? "secondary" : "ghost"}
+                          aria-label="Usar como portada"
+                          onClick={() => makeCover(doc.id)}
+                        >
+                          <Star className={cn("size-3.5", doc.is_cover && "fill-current")} />
+                        </Button>
+                      )}
                       <Button
                         type="button"
                         size="sm"
@@ -660,7 +571,7 @@ export function DocumentsPanel({
               ))}
             </div>
           )}
-          {!unitPhotos && files.length > 0 && (
+          {!imagesOnlyUpload && files.length > 0 && (
             <Card className="divide-y">
               {files.map((doc) => (
                 <div key={doc.id} className="flex items-center justify-between gap-3 p-3">
