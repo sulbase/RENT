@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/context";
 import { api } from "@/api";
 import { formatDate, formatMoney, toIsoDate } from "@/lib/utils";
@@ -15,9 +15,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { resolveVoidReason, VOID_REASONS } from "@/lib/void-reasons";
 import type { Payment, PaymentMethod, RentCharge } from "@/types";
 
 interface Props {
@@ -27,22 +29,24 @@ interface Props {
   onSaved?: () => void;
 }
 
-const VOID_REASONS = [
-  { value: "duplicado", label: "Pago duplicado" },
-  { value: "monto", label: "Monto incorrecto" },
-  { value: "cargo", label: "Cargo equivocado" },
-  { value: "no_recibido", label: "Pago no recibido" },
-  { value: "error", label: "Error de registro" },
-  { value: "otro", label: "Otro" },
-] as const;
-
 const METHODS: { value: PaymentMethod; label: string }[] = [
-  { value: "cash", label: "Cash" },
-  { value: "check", label: "Check" },
-  { value: "ach", label: "ACH / bank transfer" },
-  { value: "credit", label: "Credit card" },
-  { value: "other", label: "Other" },
+  { value: "cash", label: "Efectivo" },
+  { value: "check", label: "Cheque" },
+  { value: "ach", label: "Transferencia bancaria" },
+  { value: "credit", label: "Tarjeta de crédito" },
+  { value: "other", label: "Otro" },
 ];
+
+function releasePagePointer() {
+  window.setTimeout(() => {
+    const openLayer = document.querySelector("[role='dialog'][data-state='open'], [role='alertdialog'][data-state='open']");
+    if (!openLayer) document.body.style.pointerEvents = "";
+  }, 50);
+}
+
+const METHOD_LABEL: Record<PaymentMethod, string> = Object.fromEntries(
+  METHODS.map((m) => [m.value, m.label]),
+) as Record<PaymentMethod, string>;
 
 export function PaymentDialog({ open, onOpenChange, charge, onSaved }: Props) {
   const app = useApp();
@@ -50,6 +54,7 @@ export function PaymentDialog({ open, onOpenChange, charge, onSaved }: Props) {
   const [liveCharge, setLiveCharge] = useState<RentCharge | null>(charge);
   /** The payment awaiting a void reason — its id is the open state. */
   const [confirming, setConfirming] = useState<string | null>(null);
+  const ignoreDialogClose = useRef(false);
   const [voidKind, setVoidKind] = useState("");
   const [voidOther, setVoidOther] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("ach");
@@ -86,7 +91,7 @@ export function PaymentDialog({ open, onOpenChange, charge, onSaved }: Props) {
   async function save() {
     if (!charge) return;
     const a = parseFloat(amount);
-    if (!Number.isFinite(a) || a <= 0) return;
+    if (!Number.isFinite(a) || a <= 0 || paidAt > toIsoDate(new Date())) return;
     setSaving(true);
     try {
       await app.recordPayment({
@@ -107,8 +112,7 @@ export function PaymentDialog({ open, onOpenChange, charge, onSaved }: Props) {
   }
 
   function resolvedVoidReason(): string {
-    if (voidKind === "otro") return voidOther.trim();
-    return VOID_REASONS.find((item) => item.value === voidKind)?.label ?? "";
+    return resolveVoidReason(voidKind, voidOther);
   }
 
   async function voidPayment(id: string, reason: string) {
@@ -136,13 +140,23 @@ export function PaymentDialog({ open, onOpenChange, charge, onSaved }: Props) {
   const remaining = Math.max(0, (shown.amount ?? 0) - (shown.amount_paid ?? 0));
   const parsedAmount = parseFloat(amount);
   const amountTooHigh = Number.isFinite(parsedAmount) && parsedAmount > remaining + 0.001;
+  const todayIso = toIsoDate(new Date());
+  const paidAtFuture = paidAt > todayIso;
 
   return (
     <>
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && ignoreDialogClose.current) return;
+        if (!next) setConfirming(null);
+        onOpenChange(next);
+        if (!next) releasePagePointer();
+      }}
+    >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Record payment</DialogTitle>
+          <DialogTitle>Registrar pago</DialogTitle>
         </DialogHeader>
 
         <div className="rounded-md bg-muted/40 p-3 text-sm">
@@ -150,31 +164,46 @@ export function PaymentDialog({ open, onOpenChange, charge, onSaved }: Props) {
             {shown.property_name} · {shown.unit_name}
           </div>
           <div className="text-xs text-muted-foreground">
-            {shown.tenant_first_name} {shown.tenant_last_name} · Due {formatDate(shown.due_date)} · {formatMoney(shown.amount, app.settings.currency)} charged
+            {shown.tenant_first_name} {shown.tenant_last_name} · Vence {formatDate(shown.due_date)} ·{" "}
+            {formatMoney(shown.amount, app.settings.currency)} del cargo
           </div>
           <div className="mt-1 text-xs">
-            Paid so far: <span className="font-medium tabular-nums">{formatMoney(shown.amount_paid, app.settings.currency)}</span> ·
-            Remaining: <span className="font-medium tabular-nums">{formatMoney(remaining, app.settings.currency)}</span>
+            Pagado: <span className="font-medium tabular-nums">{formatMoney(shown.amount_paid, app.settings.currency)}</span> ·
+            Saldo: <span className="font-medium tabular-nums">{formatMoney(remaining, app.settings.currency)}</span>
           </div>
         </div>
 
         {remaining > 0 ? <div className="grid gap-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label htmlFor="pay-amount">Amount</Label>
-              <Input id="pay-amount" type="number" step="0.01" min="0.01" max={remaining} value={amount} onChange={(e) => setAmount(e.target.value)} />
+              <Label htmlFor="pay-amount">Importe</Label>
+              <MoneyInput
+                id="pay-amount"
+                value={amount}
+                currency={app.settings.currency}
+                onChange={setAmount}
+              />
               {amountTooHigh ? (
                 <p className="mt-1 text-xs text-destructive">El importe supera el saldo del cargo.</p>
               ) : null}
             </div>
             <div>
-              <Label htmlFor="pay-date">Paid on</Label>
-              <Input id="pay-date" type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} />
+              <Label htmlFor="pay-date">Fecha de pago</Label>
+              <Input
+                id="pay-date"
+                type="date"
+                value={paidAt}
+                max={todayIso}
+                onChange={(e) => setPaidAt(e.target.value)}
+              />
+              {paidAtFuture ? (
+                <p className="mt-1 text-xs text-destructive">La fecha no puede ser posterior a hoy.</p>
+              ) : null}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label>Method</Label>
+              <Label>Método</Label>
               <Select value={method} onValueChange={(v) => setMethod(v as PaymentMethod)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -183,19 +212,24 @@ export function PaymentDialog({ open, onOpenChange, charge, onSaved }: Props) {
               </Select>
             </div>
             <div>
-              <Label htmlFor="pay-ref">Reference</Label>
-              <Input id="pay-ref" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Check #, transaction ID" />
+              <Label htmlFor="pay-ref">Referencia</Label>
+              <Input
+                id="pay-ref"
+                value={reference}
+                onChange={(e) => setReference(e.target.value)}
+                placeholder="N.º de cheque, folio de transferencia"
+              />
             </div>
           </div>
           <div>
-            <Label htmlFor="pay-notes">Notes</Label>
+            <Label htmlFor="pay-notes">Notas</Label>
             <Textarea id="pay-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
           </div>
         </div> : null}
 
         {history.length > 0 && (
           <div className="mt-2">
-            <div className="section-label mb-1.5">Past payments</div>
+            <div className="section-label mb-1.5">Pagos anteriores</div>
             <ul className="divide-y divide-border overflow-hidden rounded-md shadow-edge">
               {history.map((p) => (
                 <li key={p.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
@@ -203,7 +237,10 @@ export function PaymentDialog({ open, onOpenChange, charge, onSaved }: Props) {
                     <span className={`font-medium tabular-nums ${p.voided_at ? "text-muted-foreground line-through" : ""}`}>
                       {formatMoney(p.amount, app.settings.currency)}
                     </span>
-                    <span className="text-muted-foreground"> · {formatDate(p.paid_at)} · {p.method}</span>
+                    <span className="text-muted-foreground">
+                      {" "}
+                      · {formatDate(p.paid_at)} · {METHOD_LABEL[p.method] ?? p.method}
+                    </span>
                     {p.reference && <span className="text-muted-foreground"> · {p.reference}</span>}
                     {p.voided_at && <span className="text-muted-foreground"> · Anulado: {p.void_reason}</span>}
                   </div>
@@ -228,10 +265,14 @@ export function PaymentDialog({ open, onOpenChange, charge, onSaved }: Props) {
         )}
 
         <DialogFooter className="mt-2">
-          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Close</Button>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cerrar</Button>
           {remaining > 0 ? (
-            <Button type="button" onClick={save} disabled={saving || !Number.isFinite(parsedAmount) || parsedAmount <= 0 || amountTooHigh}>
-              Record payment
+            <Button
+              type="button"
+              onClick={save}
+              disabled={saving || !Number.isFinite(parsedAmount) || parsedAmount <= 0 || amountTooHigh || paidAtFuture}
+            >
+              Registrar pago
             </Button>
           ) : null}
         </DialogFooter>
@@ -239,7 +280,18 @@ export function PaymentDialog({ open, onOpenChange, charge, onSaved }: Props) {
     </Dialog>
 
       {pending ? (
-        <AlertDialog open onOpenChange={(o) => { if (!o) setConfirming(null); }}>
+        <AlertDialog
+          open
+          onOpenChange={(o) => {
+            if (o) return;
+            ignoreDialogClose.current = true;
+            setConfirming(null);
+            window.setTimeout(() => {
+              ignoreDialogClose.current = false;
+              releasePagePointer();
+            }, 0);
+          }}
+        >
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>
@@ -283,7 +335,11 @@ export function PaymentDialog({ open, onOpenChange, charge, onSaved }: Props) {
                 onClick={() => {
                   const reason = resolvedVoidReason();
                   const id = pending.id;
+                  ignoreDialogClose.current = true;
                   setConfirming(null);
+                  window.setTimeout(() => {
+                    ignoreDialogClose.current = false;
+                  }, 0);
                   void voidPayment(id, reason);
                 }}
               >

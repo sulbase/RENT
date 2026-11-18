@@ -139,7 +139,7 @@ export function TenantIdentification({
   const openUrl = openDoc ? previews[openDoc.id] : undefined;
 
   return (
-    <section className={cn("space-y-3", !viewing && "border-t pt-3")}>
+    <section className="space-y-3">
       <div>
         {viewing ? (
           <h2 className="text-[1.0625rem] font-semibold leading-tight">Identificación</h2>

@@ -3,18 +3,31 @@ import { FileText } from "lucide-react";
 import { api, apiBlob } from "@/api";
 import { useApp } from "@/context";
 import { useAuth } from "@/hooks/use-auth";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatMoney, formatPeriod } from "@/lib/utils";
+import { resolveVoidReason, VOID_REASONS } from "@/lib/void-reasons";
 
 type PendingReceipt = {
   id: string;
   amount: number;
   paid_on: string;
   reference: string | null;
+  payer_bank_name: string | null;
+  receipt_number: string | null;
   note: string | null;
   created_at: string;
   period: string;
@@ -26,7 +39,33 @@ type PendingReceipt = {
   property_name: string | null;
   document_id: string | null;
   document_filename: string | null;
+  fill_source?: "manual" | "automatic";
 };
+
+type ReceiptGroup = {
+  key: string;
+  rows: PendingReceipt[];
+};
+
+/** One uploaded file is one review, even when it covers several months. */
+function groupReceipts(rows: PendingReceipt[]): ReceiptGroup[] {
+  const groups: ReceiptGroup[] = [];
+  for (const row of rows) {
+    const key = row.document_id ?? row.id;
+    const current = groups.find((group) => group.key === key);
+    if (current) current.rows.push(row);
+    else groups.push({ key, rows: [row] });
+  }
+  return groups
+    .map((group) => ({
+      key: group.key,
+      rows: [...group.rows].sort((a, b) => a.period.localeCompare(b.period) || a.created_at.localeCompare(b.created_at)),
+    }))
+    .sort(
+      (a, b) =>
+        a.rows[0].period.localeCompare(b.rows[0].period) || a.rows[0].created_at.localeCompare(b.rows[0].created_at),
+    );
+}
 
 /** Receipts tenants sent from the portal. Approving records an ordinary payment. */
 export function ReceiptReview({ onChanged }: { onChanged: () => void }) {
@@ -36,7 +75,8 @@ export function ReceiptReview({ onChanged }: { onChanged: () => void }) {
   const [rows, setRows] = useState<PendingReceipt[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<PendingReceipt | null>(null);
-  const [reason, setReason] = useState("");
+  const [rejectKind, setRejectKind] = useState("");
+  const [rejectOther, setRejectOther] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -80,6 +120,7 @@ export function ReceiptReview({ onChanged }: { onChanged: () => void }) {
 
   if (rows.length === 0) return null;
   const currency = settings.currency;
+  const groups = groupReceipts(rows);
 
   return (
     <Card className="p-5">
@@ -88,21 +129,42 @@ export function ReceiptReview({ onChanged }: { onChanged: () => void }) {
         Enviados por inquilinos desde el portal. Al aprobar se registra el pago como transferencia.
       </p>
       <ul className="mt-3 divide-y">
-        {rows.map((row) => (
-          <li key={row.id} className="flex flex-wrap items-start justify-between gap-3 py-3 last:pb-0">
+        {groups.map((group) => {
+          const row = group.rows[0];
+          const total = group.rows.reduce((sum, item) => sum + Number(item.amount), 0);
+          return (
+          <li key={group.key} className="flex flex-wrap items-start justify-between gap-3 py-3 last:pb-0">
             <div className="min-w-0 space-y-0.5">
               <p className="text-sm font-medium">
-                {row.tenant_first_name} {row.tenant_last_name} · {formatMoney(row.amount, currency)}
+                {row.tenant_first_name} {row.tenant_last_name} · {formatMoney(total, currency)}
+                <span
+                  className={
+                    row.fill_source === "automatic"
+                      ? "ml-2 text-xs font-medium text-green-600"
+                      : "ml-2 text-xs font-medium text-amber-600"
+                  }
+                >
+                  {row.fill_source === "automatic" ? "Llenado automático" : "Llenado manual"}
+                </span>
               </p>
+              <ul className="space-y-0.5 text-xs text-muted-foreground">
+                {group.rows.map((item) => (
+                  <li key={item.id}>
+                    Renta de{" "}
+                    <span className="font-medium capitalize text-destructive">{formatPeriod(item.period)}</span>
+                    {` · ${formatMoney(item.amount, currency)}`}
+                    {` · saldo ${formatMoney(Math.max(0, item.charge_amount - item.amount_paid), currency)}`}
+                  </li>
+                ))}
+              </ul>
               <p className="text-xs text-muted-foreground">
-                <span className="capitalize">Renta de {formatPeriod(row.period)}</span>
-                {[row.property_name, row.unit_name].filter(Boolean).length > 0 &&
-                  ` · ${[row.property_name, row.unit_name].filter(Boolean).join(" · ")}`}
-                {` · saldo ${formatMoney(Math.max(0, row.charge_amount - row.amount_paid), currency)}`}
-              </p>
-              <p className="text-xs text-muted-foreground">
+                {[row.property_name, row.unit_name].filter(Boolean).join(" · ")}
+                {([row.property_name, row.unit_name].filter(Boolean).length > 0 ? " · " : "")}
                 Pagado el {formatDate(row.paid_on)}
-                {row.reference ? ` · Ref. ${row.reference}` : ""} · Enviado {formatDate(row.created_at)}
+                {row.payer_bank_name ? ` · ${row.payer_bank_name}` : ""}
+                {row.receipt_number ? ` · Comprobante ${row.receipt_number}` : ""}
+                {row.reference ? ` · Ref. ${row.reference}` : ""}
+                {` · Enviado ${formatDate(row.created_at)}`}
               </p>
               {row.note && <p className="text-xs text-muted-foreground">“{row.note}”</p>}
             </div>
@@ -119,7 +181,8 @@ export function ReceiptReview({ onChanged }: { onChanged: () => void }) {
                     size="sm"
                     disabled={busy === row.id}
                     onClick={() => {
-                      setReason("");
+                      setRejectKind("");
+                      setRejectOther("");
                       setRejecting(row);
                     }}
                   >
@@ -132,42 +195,65 @@ export function ReceiptReview({ onChanged }: { onChanged: () => void }) {
               )}
             </div>
           </li>
-        ))}
+          );
+        })}
       </ul>
 
-      <Dialog open={rejecting !== null} onOpenChange={(open) => !open && setRejecting(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Rechazar comprobante</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-1">
-            <Label htmlFor="reject-reason">Motivo (lo verá el inquilino)</Label>
-            <Textarea
-              id="reject-reason"
-              rows={3}
-              maxLength={200}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="No encontramos la transferencia con esa referencia"
-            />
-          </div>
-          <DialogFooter className="mt-2">
-            <Button variant="ghost" onClick={() => setRejecting(null)}>
-              Cancelar
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={!reason.trim() || busy !== null}
-              onClick={async () => {
-                if (!rejecting) return;
-                if (await review(rejecting, "reject", { reason: reason.trim() })) setRejecting(null);
-              }}
-            >
-              Rechazar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {rejecting ? (
+        <AlertDialog open onOpenChange={(open) => { if (!open) setRejecting(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Rechazar comprobante</AlertDialogTitle>
+              <AlertDialogDescription>
+                El inquilino verá el motivo en el portal. Se rechazarán todos los meses de este envío.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="grid gap-3">
+              <div>
+                <Label>Motivo</Label>
+                <Select value={rejectKind || undefined} onValueChange={setRejectKind}>
+                  <SelectTrigger aria-label="Motivo">
+                    <SelectValue placeholder="Elige un motivo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {VOID_REASONS.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {rejectKind === "otro" ? (
+                <div>
+                  <Label htmlFor="reject-other">Describe el motivo</Label>
+                  <Textarea
+                    id="reject-other"
+                    value={rejectOther}
+                    onChange={(e) => setRejectOther(e.target.value)}
+                    rows={2}
+                    maxLength={200}
+                  />
+                </div>
+              ) : null}
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={!resolveVoidReason(rejectKind, rejectOther) || busy !== null}
+                onClick={async () => {
+                  const reason = resolveVoidReason(rejectKind, rejectOther);
+                  const row = rejecting;
+                  setRejecting(null);
+                  if (row && reason) await review(row, "reject", { reason });
+                }}
+              >
+                Rechazar comprobante
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
     </Card>
   );
 }

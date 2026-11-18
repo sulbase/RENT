@@ -3,11 +3,14 @@ import { Bell } from "lucide-react";
 import { api } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useRouter } from "@/hooks/use-router";
+import { notificationHref } from "@/lib/notification-href";
 import { cn } from "@/lib/utils";
 
 type NotificationKind =
   | "rent_due"
   | "rent_overdue"
+  | "rent_late_notice"
   | "lease_expiring"
   | "work_order"
   | "signature"
@@ -20,6 +23,10 @@ type NotificationRow = {
   title: string;
   body: string;
   severity: "info" | "warning" | "critical";
+  entity_type: string | null;
+  entity_id: string | null;
+  period: string | null;
+  signature_lease_id: string | null;
   read_at: string | null;
   created_at: string;
 };
@@ -28,6 +35,7 @@ const KIND_LABEL: Record<NotificationKind | "all", string> = {
   all: "Todos los tipos",
   rent_due: "Renta por vencer",
   rent_overdue: "Renta vencida",
+  rent_late_notice: "Avisos de mora",
   lease_expiring: "Contratos",
   work_order: "Órdenes",
   signature: "Firma",
@@ -42,6 +50,7 @@ const READ_LABEL = {
 } as const;
 
 export function NotificationBell() {
+  const { navigate } = useRouter();
   const [open, setOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [rows, setRows] = useState<NotificationRow[]>([]);
@@ -93,6 +102,20 @@ export function NotificationBell() {
   async function markOne(id: string) {
     await api("POST", `/api/notifications/${id}/read`);
     await loadList();
+  }
+
+  async function openNotification(row: NotificationRow) {
+    const href = notificationHref(row);
+    if (!href) return;
+    setOpen(false);
+    if (!row.read_at) {
+      try {
+        await markOne(row.id);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "No se pudo marcar la alerta");
+      }
+    }
+    navigate(href);
   }
 
   async function markAll() {
@@ -183,19 +206,19 @@ export function NotificationBell() {
               ) : null}
               {!error && rows.length > 0 ? (
                 <ul>
-                  {rows.map((row) => (
+                  {rows.map((row) => {
+                    const href = notificationHref(row);
+                    return (
                     <li key={row.id} className="border-b border-border">
                       <button
                         type="button"
+                        disabled={!href}
                         className={cn(
-                          "flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-muted",
+                          "flex w-full flex-col gap-1 px-4 py-3 text-left",
+                          href ? "cursor-pointer hover:bg-muted" : "cursor-default opacity-80",
                           row.read_at ? "opacity-70" : "",
                         )}
-                        onClick={() => {
-                          if (!row.read_at) void markOne(row.id).catch((err: unknown) => {
-                            setError(err instanceof Error ? err.message : "No se pudo marcar la alerta");
-                          });
-                        }}
+                        onClick={() => void openNotification(row)}
                       >
                         <span className="flex items-center gap-2">
                           <Badge
@@ -220,7 +243,8 @@ export function NotificationBell() {
                         </span>
                       </button>
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               ) : null}
             </div>

@@ -81,8 +81,11 @@ export interface Lease {
   deposit: number;
   rent_due_day: number;
   late_fee: number;
+  late_fee_grace_days: number | null;
+  vehicle_monthly_fee: number;
   status: LeaseStatus;
   notes: string | null;
+  metadata?: { guarantee_months?: number } | null;
   created_at: string;
   // Joined
   unit_name?: string | null;
@@ -106,6 +109,7 @@ export interface RentCharge {
   amount: number;
   amount_paid: number;
   status: ChargeStatus;
+  kind?: string;
   notes: string | null;
   created_at: string;
   // Joined
@@ -239,7 +243,13 @@ export interface DashboardSummary {
 export type NewProperty = Partial<Omit<Property, "id" | "created_at" | "unit_count" | "occupied_count">> & { name: string };
 export type NewUnit = Partial<Omit<Unit, "id" | "created_at" | "property_name" | "property_color" | "property_address" | "property_city" | "active_lease_id" | "active_tenant_name">> & { property_id: string; name: string };
 export type NewTenant = Partial<Omit<Tenant, "id" | "created_at" | "active_unit_id" | "active_unit_name" | "active_property_name">> & { first_name: string; last_name: string };
-export type NewLease = Partial<Omit<Lease, "id" | "created_at" | "unit_name" | "property_id" | "property_name" | "property_color" | "tenant_first_name" | "tenant_last_name" | "tenant_email" | "tenant_phone" | "tenant_government_id">> & { unit_id: string; start_date: string; end_date: string };
+export type NewLease = Partial<Omit<Lease, "id" | "created_at" | "metadata" | "unit_name" | "property_id" | "property_name" | "property_color" | "tenant_first_name" | "tenant_last_name" | "tenant_email" | "tenant_phone" | "tenant_government_id">> & {
+  unit_id: string;
+  start_date: string;
+  end_date: string;
+  /** Months of rent held as guarantee; `null` keeps `deposit` as a fixed amount. */
+  guarantee_months?: number | null;
+};
 export type NewWorkOrder = Partial<Omit<WorkOrder, "id" | "created_at" | "property_name" | "property_color" | "unit_name" | "tenant_first_name" | "tenant_last_name" | "vendor_name" | "vendor_color">> & { title: string };
 export type NewVendor = Partial<Omit<Vendor, "id" | "created_at">> & { name: string };
 export type NewApplication = Partial<Omit<Application, "id" | "created_at" | "unit_name" | "property_name">> & { first_name: string; last_name: string };

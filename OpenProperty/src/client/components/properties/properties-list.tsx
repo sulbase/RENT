@@ -5,14 +5,12 @@ import { cn, colorClasses } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { PropertyDialog } from "./property-dialog";
-import type { Property } from "@/types";
 import { PageShell } from "@/components/page-shell";
 import { propertyTypeLabel } from "@/lib/labels";
 
 export function PropertiesList({ navigate }: { navigate: (to: string) => void }) {
   const { properties } = useApp();
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState<Property | undefined>(undefined);
 
   const totalUnits = properties.reduce((sum, p) => sum + (p.unit_count ?? 0), 0);
   const occupied = properties.reduce((sum, p) => sum + (p.occupied_count ?? 0), 0);
@@ -23,7 +21,7 @@ export function PropertiesList({ navigate }: { navigate: (to: string) => void })
       meta={`${properties.length} ${properties.length === 1 ? "propiedad" : "propiedades"} · ${totalUnits} ${totalUnits === 1 ? "unidad" : "unidades"} · ${occupied}/${totalUnits || 0} ocupadas`}
       actions={
         properties.length > 0 ? (
-          <Button onClick={() => { setEditing(undefined); setDialogOpen(true); }}>
+          <Button onClick={() => setDialogOpen(true)}>
             <Plus className="h-4 w-4" />
             Nueva propiedad
           </Button>
@@ -37,7 +35,7 @@ export function PropertiesList({ navigate }: { navigate: (to: string) => void })
             <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">
               Agrega la primera propiedad para llevar unidades, contratos y rentas.
             </p>
-            <Button className="mt-2" onClick={() => { setEditing(undefined); setDialogOpen(true); }}>
+            <Button className="mt-2" onClick={() => setDialogOpen(true)}>
               <Plus className="h-4 w-4" /> Nueva propiedad
             </Button>
           </div>
@@ -79,7 +77,7 @@ export function PropertiesList({ navigate }: { navigate: (to: string) => void })
                   <div className="mt-3 flex items-center justify-between">
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); setEditing(p); setDialogOpen(true); }}
+                      onClick={(e) => { e.stopPropagation(); navigate(`/properties/${p.id}/edit`); }}
                       className="text-xs text-muted-foreground hover:text-foreground"
                     >
                       Editar
@@ -94,11 +92,7 @@ export function PropertiesList({ navigate }: { navigate: (to: string) => void })
         </div>
       )}
 
-      <PropertyDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        property={editing}
-      />
+      <PropertyDialog open={dialogOpen} onOpenChange={setDialogOpen} />
     </PageShell>
   );
 }

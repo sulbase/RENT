@@ -51,7 +51,12 @@ type SignatureRow = {
   status: SignatureState["status"];
   document_id: string | null;
   purpose: string | null;
+  place: string | null;
 };
+
+function withPlace(text: string, place: string | null): string {
+  return place ? `${text} de ${place}` : text;
+}
 
 async function one<T>(sql: Sql, text: string, params: unknown[]): Promise<T | undefined> {
   const rows = await sql.unsafe(text, params as never[]);
@@ -165,10 +170,12 @@ async function notifySignatureTransition(
             signatureId: signature.id,
             event: "signed",
             signerEmail: recipient.email,
-            detail:
+            detail: withPlace(
               signature.purpose === "inventory"
                 ? `${recipient.email} firmó el inventario`
                 : `${recipient.email} firmó el contrato`,
+              signature.place,
+            ),
           }),
         );
       }
@@ -181,10 +188,12 @@ async function notifySignatureTransition(
           signatureId: signature.id,
           event: "completed",
           label: signature.purpose === "inventory" ? "inventario" : "contrato",
-          detail:
+          detail: withPlace(
             signature.purpose === "inventory"
               ? "Todos los firmantes completaron el inventario"
               : "Todos los firmantes completaron el contrato",
+            signature.place,
+          ),
         }),
       );
     }
@@ -198,10 +207,12 @@ async function notifySignatureTransition(
           organizationId: signature.organization_id,
           signatureId: signature.id,
           event: next.status,
-          detail:
+          detail: withPlace(
             next.status === "declined"
               ? "Un firmante rechazó la solicitud"
               : "La solicitud de firma expiró",
+            signature.place,
+          ),
         }),
       );
     }
@@ -230,9 +241,14 @@ async function applyWebhookEvent(
   try {
     const signature = await one<SignatureRow>(
       handle.sql,
-      `SELECT id, organization_id, lease_id, purpose, provider_request_id, status, document_id
-       FROM lease_signatures
-       WHERE provider_request_id = $1`,
+      `SELECT s.id, s.organization_id, s.lease_id, s.purpose, s.provider_request_id, s.status,
+              s.document_id,
+              NULLIF(concat_ws(' · ', p.name, u.name), '') AS place
+       FROM lease_signatures s
+       LEFT JOIN leases l ON l.id = s.lease_id AND l.organization_id = s.organization_id
+       LEFT JOIN units u ON u.id = l.unit_id AND u.organization_id = l.organization_id
+       LEFT JOIN properties p ON p.id = u.property_id AND p.organization_id = u.organization_id
+       WHERE s.provider_request_id = $1`,
       [event.signingRequestId],
     );
     if (!signature) return;

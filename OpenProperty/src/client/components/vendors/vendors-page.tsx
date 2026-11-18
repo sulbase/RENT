@@ -20,7 +20,17 @@ import { Textarea } from "@/components/ui/textarea";
 import type { Vendor, VendorCategory } from "@/types";
 import { PageShell } from "@/components/page-shell";
 
-const COLORS = ["sky", "emerald", "amber", "rose", "violet", "fuchsia", "teal", "orange", "slate"];
+const COLORS: { value: string; label: string }[] = [
+  { value: "sky", label: "Celeste" },
+  { value: "emerald", label: "Esmeralda" },
+  { value: "amber", label: "Ámbar" },
+  { value: "rose", label: "Rosa" },
+  { value: "violet", label: "Violeta" },
+  { value: "fuchsia", label: "Fucsia" },
+  { value: "teal", label: "Verde azulado" },
+  { value: "orange", label: "Naranja" },
+  { value: "slate", label: "Pizarra" },
+];
 
 const VENDOR_CATEGORIES: { value: VendorCategory; label: string }[] = [
   { value: "plumber", label: "Plomería" },
@@ -188,10 +198,10 @@ function VendorDialog({
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {COLORS.map((c) => (
-                      <SelectItem key={c} value={c}>
+                      <SelectItem key={c.value} value={c.value}>
                         <span className="flex items-center gap-2">
-                          <span className={`h-3 w-3 rounded-full bg-${c}-500`} />
-                          <span className="capitalize">{c}</span>
+                          <span className={`h-3 w-3 rounded-full ${colorClasses(c.value).dot}`} />
+                          <span>{c.label}</span>
                         </span>
                       </SelectItem>
                     ))}

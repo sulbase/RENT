@@ -1,3 +1,5 @@
+import { PAGE_HEIGHT_PT, PAGE_WIDTH_PT, signatureBoxPt } from "./lease-pdf";
+
 /** Current production host (firma.dev API 01.38.00). Bearer prefix is optional. */
 export const FIRMA_API_BASE = "https://api.firma.dev/functions/v1/signing-request-api";
 
@@ -91,10 +93,6 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-/** Letter-size layout used by `buildLeaseSummaryPdf` (612×792 pt). */
-const LEASE_PAGE_WIDTH_PT = 612;
-const LEASE_PAGE_HEIGHT_PT = 792;
-
 /** firma.dev expects top-left percentages (0–100); x + width and y + height must fit on the page. */
 export function signatureFieldLayout(index: number): {
   x: number;
@@ -102,16 +100,13 @@ export function signatureFieldLayout(index: number): {
   width: number;
   height: number;
 } {
-  const xPt = 72 + (index % 2) * 250;
-  const yBasePt = 640 - Math.floor(index / 2) * 80;
-  const widthPt = 200;
-  const heightPt = 48;
+  const box = signatureBoxPt(index);
   const toPct = (value: number, page: number) =>
     Math.min(100, Math.max(0, Math.round((value / page) * 1000) / 10));
-  const x = toPct(xPt, LEASE_PAGE_WIDTH_PT);
-  const width = toPct(widthPt, LEASE_PAGE_WIDTH_PT);
-  const height = toPct(heightPt, LEASE_PAGE_HEIGHT_PT);
-  const y = toPct(LEASE_PAGE_HEIGHT_PT - yBasePt - heightPt, LEASE_PAGE_HEIGHT_PT);
+  const x = toPct(box.x, PAGE_WIDTH_PT);
+  const width = toPct(box.width, PAGE_WIDTH_PT);
+  const height = toPct(box.height, PAGE_HEIGHT_PT);
+  const y = toPct(PAGE_HEIGHT_PT - box.y - box.height, PAGE_HEIGHT_PT);
   return { x, y, width, height };
 }
 
@@ -122,6 +117,8 @@ export function createFirmaClient(deps: FirmaDeps) {
       pdf: Uint8Array;
       filename: string;
       recipients: FirmaRecipientInput[];
+      /** 1-based page that holds the signature boxes. */
+      signaturePage?: number;
     }): Promise<FirmaSentRequest> {
       const documentField =
         input.pdf.byteLength <= INLINE_PDF_BYTES
@@ -147,7 +144,7 @@ export function createFirmaClient(deps: FirmaDeps) {
             return {
               recipient_id: recipient.id,
               type: "signature",
-              page: 1,
+              page: input.signaturePage ?? 1,
               x: layout.x,
               y: layout.y,
               width: layout.width,

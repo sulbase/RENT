@@ -32,8 +32,8 @@ function normalizeSetting(
   switch (key) {
     case "default_rent_due_day": {
       const n = Number(text);
-      if (!Number.isInteger(n) || n < 1 || n > 31) {
-        return { ok: false, error: "default_rent_due_day must be an integer from 1 to 31" };
+      if (!Number.isInteger(n) || n < 1 || n > 28) {
+        return { ok: false, error: "default_rent_due_day must be an integer from 1 to 28" };
       }
       return { ok: true, value: String(n) };
     }

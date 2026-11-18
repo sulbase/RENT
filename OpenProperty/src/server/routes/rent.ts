@@ -22,6 +22,8 @@ import {
 } from "../rent/payment-balance";
 import { recordPayment } from "../rent/record-payment";
 import { periodSchema, rentChargeStatusSchema } from "../schemas/common";
+import { parkingChargeAmount } from "../../shared/parking-charge";
+import { clampRentDueDay } from "../../shared/rent-due-day";
 import { parseJson, parseQuery } from "../validation";
 
 export function mountRentRoutes(app: Hono<AppEnv>) {
@@ -90,9 +92,9 @@ export function mountRentRoutes(app: Hono<AppEnv>) {
     const o = orgId(c);
     const inserted = await get<{ id: string }>(
       c,
-      `INSERT INTO rent_charges (organization_id, lease_id, period, due_date, amount, notes)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (lease_id, period) DO NOTHING
+      `INSERT INTO rent_charges (organization_id, lease_id, period, due_date, amount, notes, kind)
+     VALUES ($1, $2, $3, $4, $5, $6, 'rent')
+     ON CONFLICT (lease_id, period, kind) DO NOTHING
      RETURNING id`,
       [o, d.lease_id, d.period, d.due_date, String(d.amount ?? 0), d.notes ?? null],
     );
@@ -121,25 +123,44 @@ export function mountRentRoutes(app: Hono<AppEnv>) {
       rent_due_day: number;
       start_date: string;
       end_date: string;
+      vehicle_monthly_fee: string;
+      vehicle_count: number;
     }>(
       c,
-      "SELECT id, monthly_rent, rent_due_day, start_date::text, end_date::text FROM leases WHERE organization_id = $1 AND status = 'active'",
+      `SELECT l.id, l.monthly_rent, l.rent_due_day, l.start_date::text, l.end_date::text,
+              l.vehicle_monthly_fee,
+              LEAST(3, (
+                SELECT COUNT(*) FROM tenant_vehicles v
+                WHERE v.organization_id = l.organization_id AND v.lease_id = l.id
+              ))::int AS vehicle_count
+       FROM leases l
+       WHERE l.organization_id = $1 AND l.status = 'active'`,
       [o],
     );
     let created = 0;
     for (const l of leases) {
       const periodStart = `${period}-01`;
       if (l.end_date < periodStart || l.start_date > periodEnd) continue;
-      const day = String(Math.min(28, Math.max(1, l.rent_due_day))).padStart(2, "0");
+      const day = String(clampRentDueDay(l.rent_due_day)).padStart(2, "0");
       const dueDate = `${period}-${day}`;
-      const r = await run(
+      const rent = await run(
         c,
-        `INSERT INTO rent_charges (organization_id, lease_id, period, due_date, amount)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (lease_id, period) DO NOTHING`,
+        `INSERT INTO rent_charges (organization_id, lease_id, period, due_date, amount, kind)
+       VALUES ($1, $2, $3, $4, $5, 'rent')
+       ON CONFLICT (lease_id, period, kind) DO NOTHING`,
         [o, l.id, period, dueDate, l.monthly_rent],
       );
-      if (r.changes) created++;
+      if (rent.changes) created++;
+      const parking = parkingChargeAmount(Number(l.vehicle_monthly_fee), Number(l.vehicle_count));
+      if (parking <= 0) continue;
+      const parked = await run(
+        c,
+        `INSERT INTO rent_charges (organization_id, lease_id, period, due_date, amount, kind, notes)
+       VALUES ($1, $2, $3, $4, $5, 'parking', $6)
+       ON CONFLICT (lease_id, period, kind) DO NOTHING`,
+        [o, l.id, period, dueDate, parking.toFixed(2), `${Number(l.vehicle_count)} vehículo(s)`],
+      );
+      if (parked.changes) created++;
     }
     await run(c, MARK_OVERDUE_FOR_ORG_SQL, [o]);
     return c.json({ created, period });
@@ -184,9 +205,22 @@ export function mountRentRoutes(app: Hono<AppEnv>) {
     return c.json({ ok: true });
   });
 
+  function localCalendarDay(d = new Date()): string {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+
   const PaymentInput = z.object({
     charge_id: z.string().uuid(),
-    paid_at: z.string().optional(),
+    paid_at: z
+      .string()
+      .optional()
+      .refine(
+        (val) => !val || (val.length <= 10 ? val : val.slice(0, 10)) <= localCalendarDay(),
+        "La fecha de pago no puede ser posterior a hoy.",
+      ),
     amount: z
       .number()
       .positive()

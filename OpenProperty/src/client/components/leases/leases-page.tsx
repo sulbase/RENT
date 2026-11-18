@@ -27,8 +27,6 @@ export function LeasesPage({ navigate }: { navigate: (to: string) => void }) {
   const [filter, setFilter] = useState<LeaseStatus | "all">("active");
   const [q, setQ] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState<Lease | undefined>(undefined);
-
   async function load() {
     try {
       setLoading(true);
@@ -61,7 +59,7 @@ export function LeasesPage({ navigate }: { navigate: (to: string) => void }) {
       meta={`${leases.length} en total · ${leases.filter((l) => l.status === "active").length} activos`}
       actions={
         leases.length > 0 ? (
-          <Button onClick={() => { setEditing(undefined); setDialogOpen(true); }}>
+          <Button onClick={() => setDialogOpen(true)}>
             <Plus className="h-4 w-4" /> Nuevo contrato
           </Button>
         ) : null
@@ -91,7 +89,7 @@ export function LeasesPage({ navigate }: { navigate: (to: string) => void }) {
             <p className="font-medium">No hay contratos</p>
             <p className="max-w-sm text-sm leading-relaxed text-muted-foreground">{leases.length === 0 ? "Crea el primer contrato para empezar a cobrar renta." : "Prueba otro filtro."}</p>
             {leases.length === 0 && (
-              <Button className="mt-2" onClick={() => { setEditing(undefined); setDialogOpen(true); }}>
+              <Button className="mt-2" onClick={() => setDialogOpen(true)}>
                 <Plus className="mr-1 h-4 w-4" /> Nuevo contrato
               </Button>
             )}
@@ -117,7 +115,7 @@ export function LeasesPage({ navigate }: { navigate: (to: string) => void }) {
                     <TableRow
                       key={l.id}
                       className="cursor-pointer"
-                      onClick={() => { setEditing(l); setDialogOpen(true); }}
+                      onClick={() => navigate(`/leases/${l.id}/edit`)}
                     >
                       <TableCell>
                         {l.primary_tenant_id ? (
@@ -157,11 +155,7 @@ export function LeasesPage({ navigate }: { navigate: (to: string) => void }) {
           </Card>
         )}
 
-      <LeaseDialog
-        open={dialogOpen}
-        onOpenChange={(o) => { setDialogOpen(o); if (!o) load(); }}
-        lease={editing}
-      />
+      <LeaseDialog open={dialogOpen} onOpenChange={(o) => { setDialogOpen(o); if (!o) load(); }} />
     </PageShell>
   );
 }

@@ -32,6 +32,22 @@ export function RentPage() {
   const [paymentTarget, setPaymentTarget] = useState<RentCharge | null>(null);
   const [generating, setGenerating] = useState(false);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const nextPeriod = params.get("period");
+    const nextStatus = params.get("status");
+    if (nextPeriod && /^\d{4}-\d{2}$/.test(nextPeriod)) setPeriod(nextPeriod);
+    if (
+      nextStatus === "open" ||
+      nextStatus === "partial" ||
+      nextStatus === "paid" ||
+      nextStatus === "overdue" ||
+      nextStatus === "waived"
+    ) {
+      setStatusFilter(nextStatus);
+    }
+  }, []);
+
   async function load() {
     try {
       setLoading(true);
@@ -209,6 +225,9 @@ export function RentPage() {
                           <span className="text-muted-foreground">{c.property_name}</span>
                           <span className="px-1 text-muted-foreground/40">·</span>
                           <span className="font-medium">{c.unit_name}</span>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {c.kind === "parking" ? "Estacionamiento" : "Renta"}
                         </div>
                       </TableCell>
                       <TableCell>

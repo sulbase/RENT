@@ -1,7 +1,18 @@
 import { z } from "zod";
 import type { Context, Hono } from "hono";
 import { messageSendRateLimit } from "../auth/rate-limit";
-import { contentDisposition } from "../documents/policy";
+import {
+  buildObjectKey,
+  contentDisposition,
+  orgQuotaAllows,
+  validateUpload,
+} from "../documents/policy";
+import {
+  MAINTENANCE_CATEGORIES,
+  MAINTENANCE_LOCATIONS,
+  maintenanceTitle,
+  problemsFor,
+} from "../../shared/maintenance-request";
 import type { AppEnv } from "../env";
 import {
   get,
@@ -28,21 +39,56 @@ const PORTAL_SETTING_KEYS = [
   "bank_clabe",
 ];
 
-const plainText = z
-  .string()
-  .trim()
-  .min(1)
-  .max(10_000)
-  .refine((value) => !/<[a-z!/?]/i.test(value), "Plain text only");
+function plainText(max: number) {
+  return z
+    .string()
+    .trim()
+    .min(1)
+    .max(max)
+    .refine((value) => !/<[a-z!/?]/i.test(value), "Plain text only");
+}
 
-const ReplyBody = z.object({ body: plainText });
+const ReplyBody = z.object({ body: plainText(10_000) });
 
-const WorkOrderBody = z.object({
+const CONTACT_REASONS = ["Mantenimiento", "Pagos", "Contrato", "Acceso", "Otro"] as const;
+const RESPONSE_PREFERENCES = ["Correo del portal", "Teléfono", "Correo electrónico"] as const;
+
+const ComposeBody = z.object({
   lease_id: z.string().uuid(),
-  title: z.string().trim().min(1).max(160),
-  description: z.string().trim().max(4000).optional().nullable(),
-  priority: z.enum(["low", "normal", "high", "urgent"]).default("normal"),
+  reason: z.enum(CONTACT_REASONS),
+  subject: z.string().trim().min(1).max(200),
+  body: plainText(1000),
+  response_preference: z.enum(RESPONSE_PREFERENCES),
 });
+
+const MessageStateBody = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(50),
+  action: z.enum(["read", "unread", "hide"]),
+});
+
+const WorkOrderBody = z
+  .object({
+    lease_id: z.string().uuid(),
+    location: z.enum(MAINTENANCE_LOCATIONS),
+    category: z.enum(MAINTENANCE_CATEGORIES),
+    problem: z.string().trim().min(1).max(80),
+    description: plainText(4000),
+    has_pet: z.boolean(),
+    entry_allowed: z.literal(true),
+    entry_comment: z.string().trim().max(200).optional().default(""),
+  })
+  .superRefine((value, ctx) => {
+    if (!problemsFor(value.category).includes(value.problem)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["problem"],
+        message: "Elige un problema de la categoría",
+      });
+    }
+    if (value.entry_comment && /<[a-z!/?]/i.test(value.entry_comment)) {
+      ctx.addIssue({ code: "custom", path: ["entry_comment"], message: "Plain text only" });
+    }
+  });
 
 const WORK_ORDER_COLUMNS = `w.id, w.title, w.description, w.priority, w.status,
        w.created_at, w.scheduled_at, w.completed_at,
@@ -95,7 +141,7 @@ export function mountPortalRoutes(app: Hono<AppEnv>) {
     );
     const charges = await query(
       c,
-      `SELECT c.id, c.period, c.due_date, c.amount, c.amount_paid, c.status,
+      `SELECT c.id, c.period, c.due_date, c.amount, c.amount_paid, c.status, c.kind,
               l.id AS lease_id, u.name AS unit_name, pr.name AS property_name
        FROM rent_charges c
        JOIN leases l ON l.id = c.lease_id AND l.organization_id = c.organization_id
@@ -171,51 +217,187 @@ export function mountPortalRoutes(app: Hono<AppEnv>) {
     });
   });
 
+  app.get("/api/portal/alerts", async (c) => {
+    const tenantId = portalTenant(c);
+    if (!tenantId) return c.json({ error: "No tienes acceso al portal" }, 403);
+    const rows = await query(
+      c,
+      `/* portal_late_notices */
+       SELECT id, title, body, read_at, created_at
+       FROM notifications
+       WHERE organization_id = $1
+         AND kind = 'rent_late_notice'
+         AND entity_type = 'tenant'
+         AND entity_id = $2
+       ORDER BY created_at DESC
+       LIMIT 50`,
+      [orgId(c), tenantId],
+    );
+    return c.json({ alerts: normalizeRows(rows) });
+  });
+
+  app.post("/api/portal/alerts/:id/read", async (c) => {
+    const tenantId = portalTenant(c);
+    const id = uuidParam(c.req.param("id"));
+    if (!tenantId || !id) return c.json({ error: "Not found" }, 404);
+    const row = await get(
+      c,
+      `UPDATE notifications
+       SET read_at = COALESCE(read_at, now())
+       WHERE id = $1
+         AND organization_id = $2
+         AND kind = 'rent_late_notice'
+         AND entity_type = 'tenant'
+         AND entity_id = $3
+       RETURNING id, read_at`,
+      [id, orgId(c), tenantId],
+    );
+    if (!row) return c.json({ error: "Not found" }, 404);
+    return c.json({ alert: normalizeRow(row as Record<string, unknown>) });
+  });
+
   app.get("/api/portal/messages", async (c) => {
     const tenantId = portalTenant(c);
     const userId = c.get("userId");
     if (!tenantId || !userId) return c.json({ error: "No tienes acceso al portal" }, 403);
     const o = orgId(c);
-    const threads = await query(
+    const rows = await query(
       c,
-      `SELECT t.id, t.subject, t.last_message_at,
-              (
-                SELECT COUNT(*)::int FROM messages m
-                WHERE m.thread_id = t.id AND m.organization_id = t.organization_id
-                  AND m.sender_user_id IS DISTINCT FROM $3::uuid
-                  AND NOT EXISTS (
-                    SELECT 1 FROM message_reads r
-                    WHERE r.message_id = m.id AND r.user_id = $3::uuid
-                  )
-              ) AS unread_count
-       FROM message_threads t
-       WHERE t.organization_id = $1 AND ${THREAD_VISIBLE}
-       ORDER BY t.last_message_at DESC
-       LIMIT 50`,
+      `/* portal_inbox */
+       SELECT m.id, m.body, m.created_at, t.subject,
+              CASE WHEN m.sender_user_id = $3::uuid THEN 'Tú' ELSE org.name END AS sender_name,
+              (m.sender_user_id = $3::uuid) AS mine,
+              (m.sender_user_id = $3::uuid OR r.message_id IS NOT NULL) AS read
+       FROM messages m
+       JOIN message_threads t ON t.id = m.thread_id AND t.organization_id = m.organization_id
+       JOIN organizations org ON org.id = m.organization_id
+       LEFT JOIN message_reads r ON r.message_id = m.id AND r.user_id = $3::uuid
+       WHERE m.organization_id = $1 AND ${THREAD_VISIBLE}
+         AND m.sender_user_id IS DISTINCT FROM $3::uuid
+         AND NOT EXISTS (
+           SELECT 1 FROM portal_message_hides h
+           WHERE h.message_id = m.id AND h.user_id = $3::uuid
+         )
+       ORDER BY m.created_at DESC
+       LIMIT 100`,
       [o, tenantId, userId],
     );
-    const ids = threads.map((row) => String((row as { id: string }).id));
-    const participants = ids.length
-      ? await query(
-          c,
-          `SELECT thread_id, participant_kind, email, role
-           FROM message_thread_participants
-           WHERE organization_id = $1 AND thread_id = ANY($2::uuid[])
-           ORDER BY role, email`,
-          [o, ids],
-        )
-      : [];
-    const rows = normalizeRows(threads).map((thread) => ({
-      ...thread,
-      participants: normalizeRows(
-        participants.filter((row) => (row as { thread_id: string }).thread_id === thread.id),
-      ).map(({ thread_id: _thread, ...rest }) => rest),
-    }));
-    const unread = threads.reduce<number>(
-      (sum, row) => sum + Number((row as { unread_count?: number }).unread_count ?? 0),
-      0,
+    const messages = normalizeRows(rows);
+    const unread = messages.filter((row) => row.read !== true).length;
+    return c.json({ messages, unread_count: unread });
+  });
+
+  app.post("/api/portal/messages", messageSendRateLimit, async (c) => {
+    const tenantId = portalTenant(c);
+    const userId = c.get("userId");
+    if (!tenantId || !userId) return c.json({ error: "No tienes acceso al portal" }, 403);
+    const parsed = await parseJson(c, ComposeBody);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const o = orgId(c);
+    const tenant = await get<{ email: string | null; organization_name: string }>(
+      c,
+      `SELECT t.email, org.name AS organization_name
+       FROM tenants t
+       JOIN organizations org ON org.id = t.organization_id
+       WHERE t.id = $1 AND t.organization_id = $2`,
+      [tenantId, o],
     );
-    return c.json({ threads: rows, unread_count: unread });
+    if (!tenant) return c.json({ error: "No tienes acceso al portal" }, 403);
+    const owner = await get<{ user_id: string; email: string }>(
+      c,
+      `SELECT m.user_id, lower(u.email) AS email
+       FROM memberships m
+       JOIN auth.users u ON u.id = m.user_id
+       WHERE m.organization_id = $1 AND m.role = 'owner' AND u.email IS NOT NULL
+       ORDER BY m.created_at
+       LIMIT 1`,
+      [o],
+    );
+    if (!owner) return c.json({ error: "La propiedad no tiene un contacto" }, 400);
+    const fromEmail = (c.get("userEmail") ?? tenant.email ?? "").trim().toLowerCase();
+    if (!fromEmail) return c.json({ error: "Tu ficha no tiene correo" }, 400);
+    const d = parsed.data;
+    const lease = await get<{ id: string; unit_name: string | null }>(
+      c,
+      `SELECT l.id, u.name AS unit_name
+       FROM leases l
+       JOIN units u ON u.id = l.unit_id AND u.organization_id = l.organization_id
+       WHERE l.id = $1 AND l.organization_id = $2
+         AND l.primary_tenant_id = $3 AND l.status = 'active'`,
+      [d.lease_id, o, tenantId],
+    );
+    if (!lease) return c.json({ error: "Elige uno de tus contratos vigentes" }, 400);
+    const unitLabel = lease.unit_name ?? "Unidad";
+    const body = `Unidad: ${unitLabel}\nRazón de contacto: ${d.reason}\nPreferencia de respuesta: ${d.response_preference}\n\n${d.body}`;
+    const threadId = crypto.randomUUID();
+    const messageId = crypto.randomUUID();
+    await c.get("sql").begin(async (raw) => {
+      const tx = raw as unknown as Tx;
+      await tx.unsafe(
+        `INSERT INTO message_threads (
+           id, organization_id, subject, entity_type, entity_id, lease_id, created_by
+         ) VALUES ($1, $2, $3, 'lease', $4, $4, $5)`,
+        [threadId, o, d.subject, lease.id, userId],
+      );
+      await tx.unsafe(
+        `INSERT INTO message_thread_participants (
+           organization_id, thread_id, participant_kind, user_id, tenant_id, email, role
+         ) VALUES
+           ($1, $2, 'tenant', $3, $4, $5, 'from'),
+           ($1, $2, 'membership', $6, NULL, $7, 'to')`,
+        [o, threadId, userId, tenantId, fromEmail, owner.user_id, owner.email],
+      );
+      await tx.unsafe(
+        `INSERT INTO messages (id, thread_id, organization_id, sender_user_id, body)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [messageId, threadId, o, userId, body],
+      );
+    });
+    return c.json({ message: { id: messageId } }, 201);
+  });
+
+  app.post("/api/portal/messages/state", async (c) => {
+    const tenantId = portalTenant(c);
+    const userId = c.get("userId");
+    if (!tenantId || !userId) return c.json({ error: "No tienes acceso al portal" }, 403);
+    const parsed = await parseJson(c, MessageStateBody);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const o = orgId(c);
+    const ids = parsed.data.ids;
+    const visible = `m.organization_id = $1 AND m.id = ANY($4::uuid[]) AND ${THREAD_VISIBLE}`;
+    if (parsed.data.action === "read") {
+      await run(
+        c,
+        `INSERT INTO message_reads (message_id, user_id, organization_id, read_at)
+         SELECT m.id, $3::uuid, m.organization_id, now()
+         FROM messages m
+         JOIN message_threads t ON t.id = m.thread_id AND t.organization_id = m.organization_id
+         WHERE ${visible}
+         ON CONFLICT (message_id, user_id) DO NOTHING`,
+        [o, tenantId, userId, ids],
+      );
+    } else if (parsed.data.action === "unread") {
+      await run(
+        c,
+        `DELETE FROM message_reads r
+         USING messages m
+         JOIN message_threads t ON t.id = m.thread_id AND t.organization_id = m.organization_id
+         WHERE r.message_id = m.id AND r.user_id = $3::uuid AND ${visible}`,
+        [o, tenantId, userId, ids],
+      );
+    } else {
+      await run(
+        c,
+        `INSERT INTO portal_message_hides (message_id, user_id, organization_id)
+         SELECT m.id, $3::uuid, m.organization_id
+         FROM messages m
+         JOIN message_threads t ON t.id = m.thread_id AND t.organization_id = m.organization_id
+         WHERE ${visible}
+         ON CONFLICT (message_id, user_id) DO NOTHING`,
+        [o, tenantId, userId, ids],
+      );
+    }
+    return c.json({ ok: true });
   });
 
   app.get("/api/portal/messages/:id", async (c) => {
@@ -357,21 +539,40 @@ export function mountPortalRoutes(app: Hono<AppEnv>) {
       [d.lease_id, o, tenantId],
     );
     if (!lease) return c.json({ error: "Elige uno de tus contratos vigentes" }, 400);
+    const notes = [
+      `Dónde: ${d.location}`,
+      `Categoría: ${d.category}`,
+      `Mascota: ${d.has_pet ? "Sí" : "No"}`,
+      "Permiso de ingreso: Sí",
+      d.entry_comment ? `Comentario de entrada: ${d.entry_comment}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const metadata = JSON.stringify({
+      source: "portal",
+      location: d.location,
+      category: d.category,
+      problem: d.problem,
+      has_pet: d.has_pet,
+      entry_allowed: true,
+      entry_comment: d.entry_comment || null,
+    });
     const inserted = await get<{ id: string }>(
       c,
       `INSERT INTO work_orders (
          organization_id, property_id, unit_id, tenant_id,
-         title, description, priority, status, metadata
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', '{"source":"portal"}'::jsonb)
+         title, description, priority, status, notes, metadata
+       ) VALUES ($1, $2, $3, $4, $5, $6, 'normal', 'open', $7, $8::jsonb)
        RETURNING id`,
       [
         o,
         lease.property_id,
         lease.unit_id,
         tenantId,
-        d.title,
-        d.description?.trim() || null,
-        d.priority ?? "normal",
+        maintenanceTitle(d.category, d.problem),
+        d.description,
+        notes,
+        metadata,
       ],
     );
     if (!inserted) return c.json({ error: "Insert failed" }, 500);
@@ -385,5 +586,87 @@ export function mountPortalRoutes(app: Hono<AppEnv>) {
       [inserted.id, o],
     );
     return c.json({ work_order: normalizeRow(row as Record<string, unknown>) }, 201);
+  });
+
+  app.post("/api/portal/work-orders/:id/photo", messageSendRateLimit, async (c) => {
+    const tenantId = portalTenant(c);
+    const id = uuidParam(c.req.param("id"));
+    if (!tenantId || !id) return c.json({ error: "Not found" }, 404);
+    const bucket = c.env.FILES;
+    if (!bucket) return c.json({ error: "File storage is not configured" }, 503);
+
+    const owned = await get<{ id: string }>(
+      c,
+      `SELECT id FROM work_orders WHERE id = $1 AND organization_id = $2 AND tenant_id = $3`,
+      [id, orgId(c), tenantId],
+    );
+    if (!owned) return c.json({ error: "Not found" }, 404);
+
+    const existing = await get<{ n: number }>(
+      c,
+      `SELECT COUNT(*)::int AS n FROM documents
+       WHERE organization_id = $1 AND work_order_id = $2 AND deleted_at IS NULL`,
+      [orgId(c), id],
+    );
+    if (Number(existing?.n ?? 0) >= 3) {
+      return c.json({ error: "Esta solicitud admite como máximo 3 fotografías" }, 409);
+    }
+
+    const body = await c.req.parseBody();
+    const file = body.file;
+    if (!(file instanceof File)) return c.json({ error: "Elige una fotografía" }, 400);
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const checked = validateUpload({
+      filename: file.name,
+      declaredType: file.type,
+      bytes,
+      size: file.size,
+      kind: "image",
+      isCover: false,
+      maxBytes: 8 * 1024 * 1024,
+      oversizeError: "La fotografía puede pesar como máximo 8 MB",
+      imagesOnly: true,
+      imagesOnlyError: "Solo se admiten fotografías JPG o PNG",
+    });
+    if (!checked.ok) return c.json({ error: checked.error }, 400);
+    if (checked.mime !== "image/jpeg" && checked.mime !== "image/png") {
+      return c.json({ error: "Solo se admiten fotografías JPG o PNG" }, 400);
+    }
+
+    const quota = await get<{ file_count: number; total_bytes: number }>(
+      c,
+      `SELECT COUNT(*)::int AS file_count, COALESCE(SUM(size_bytes), 0)::bigint AS total_bytes
+       FROM documents WHERE organization_id = $1 AND deleted_at IS NULL`,
+      [orgId(c)],
+    );
+    const allowed = orgQuotaAllows({
+      fileCount: Number(quota?.file_count ?? 0),
+      totalBytes: Number(quota?.total_bytes ?? 0),
+      nextSize: file.size,
+    });
+    if (!allowed.ok) return c.json({ error: allowed.error }, 409);
+
+    const documentId = crypto.randomUUID();
+    const r2Key = buildObjectKey({
+      organizationId: orgId(c),
+      entityType: "work_order",
+      entityId: id,
+      filename: checked.filename,
+    });
+    await bucket.put(r2Key, bytes, { httpMetadata: { contentType: checked.mime } });
+    const row = await get(
+      c,
+      `INSERT INTO documents (
+         id, organization_id, entity_type, entity_id, work_order_id,
+         kind, r2_key, filename, mime, size_bytes, uploaded_by, is_cover
+       ) VALUES ($1, $2, 'work_order', $3, $3, 'image', $4, $5, $6, $7, $8, false)
+       RETURNING id`,
+      [documentId, orgId(c), id, r2Key, checked.filename, checked.mime, file.size, c.get("userId")],
+    );
+    if (!row) {
+      await bucket.delete(r2Key);
+      return c.json({ error: "No se pudo guardar la fotografía" }, 500);
+    }
+    return c.json({ document: normalizeRow(row as Record<string, unknown>) }, 201);
   });
 }

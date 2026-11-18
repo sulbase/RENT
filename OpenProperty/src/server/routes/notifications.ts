@@ -13,8 +13,14 @@ const ListQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
+/** Late notices belong to the tenant portal. The staff mailbox keeps the shorter rent alerts. */
 const VISIBLE = `organization_id = $1
+  AND kind <> 'rent_late_notice'
   AND ($2::uuid IS NULL OR user_id IS NULL OR user_id = $2::uuid)`;
+
+const VISIBLE_ON_N = `n.organization_id = $1
+  AND n.kind <> 'rent_late_notice'
+  AND ($2::uuid IS NULL OR n.user_id IS NULL OR n.user_id = $2::uuid)`;
 
 export function mountNotificationRoutes(app: Hono<AppEnv>) {
   app.get("/api/notifications", async (c) => {
@@ -26,16 +32,22 @@ export function mountNotificationRoutes(app: Hono<AppEnv>) {
     const limit = parsed.data.limit ?? 50;
     const rows = await query(
       c,
-      `SELECT id, kind, title, body, severity, entity_type, entity_id, period, read_at, created_at
-       FROM notifications
-       WHERE ${VISIBLE}
-         AND ($3::text IS NULL OR kind::text = $3)
+      `SELECT n.id, n.kind, n.title, n.body, n.severity, n.entity_type, n.entity_id, n.period,
+              n.read_at, n.created_at,
+              ls.lease_id AS signature_lease_id
+       FROM notifications n
+       LEFT JOIN lease_signatures ls
+         ON n.entity_type = 'lease_signature'
+        AND ls.id = n.entity_id
+        AND ls.organization_id = n.organization_id
+       WHERE ${VISIBLE_ON_N}
+         AND ($3::text IS NULL OR n.kind::text = $3)
          AND (
            $4 = 'all'
-           OR ($4 = 'unread' AND read_at IS NULL)
-           OR ($4 = 'read' AND read_at IS NOT NULL)
+           OR ($4 = 'unread' AND n.read_at IS NULL)
+           OR ($4 = 'read' AND n.read_at IS NOT NULL)
          )
-       ORDER BY created_at DESC
+       ORDER BY n.created_at DESC
        LIMIT $5`,
       [orgId(c), userId, kind ?? null, read, limit],
     );
@@ -73,6 +85,7 @@ export function mountNotificationRoutes(app: Hono<AppEnv>) {
        SET read_at = COALESCE(read_at, now())
        WHERE id = $1
          AND organization_id = $2
+         AND kind <> 'rent_late_notice'
          AND ($3::uuid IS NULL OR user_id IS NULL OR user_id = $3::uuid)
        RETURNING id, kind, title, body, severity, entity_type, entity_id, period, read_at, created_at`,
       [id, orgId(c), userId],

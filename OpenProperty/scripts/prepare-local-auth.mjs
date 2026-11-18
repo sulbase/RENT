@@ -57,6 +57,9 @@ const firmaWebhook = process.env.FIRMA_WEBHOOK_SECRET?.trim() || readDevVar(devV
 if (firmaKey) lines.push(`FIRMA_API_KEY=${quote(firmaKey)}`);
 if (firmaWebhook) lines.push(`FIRMA_WEBHOOK_SECRET=${quote(firmaWebhook)}`);
 
+const geminiKey = process.env.GEMINI_API_KEY?.trim() || readDevVar(devVarsPath, "GEMINI_API_KEY");
+if (geminiKey) lines.push(`GEMINI_API_KEY=${quote(geminiKey)}`);
+
 writeFileSync(devVarsPath, lines.join("\n") + "\n", "utf8");
 console.log("Escrito:", devVarsPath);
 

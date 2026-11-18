@@ -20,6 +20,10 @@ const DOC_A_PHOTO = "90000000-0000-4000-8000-0000000000a1";
 const DOC_A_DELETED = "90000000-0000-4000-8000-0000000000a2";
 const THREAD_A = "40000000-0000-4000-8000-00000000000a";
 const THREAD_B = "40000000-0000-4000-8000-00000000000b";
+const MSG_A = "50000000-0000-4000-8000-00000000000a";
+const MSG_B = "50000000-0000-4000-8000-00000000000b";
+const ALERT_A = "51000000-0000-4000-8000-00000000000a";
+const ALERT_B = "51000000-0000-4000-8000-00000000000b";
 
 type Lease = { id: string; tenant: string; unit_id: string; status: string };
 type Doc = { id: string; lease_id: string; kind: string; deleted: boolean; r2_key: string };
@@ -50,6 +54,47 @@ function createSql() {
     { id: THREAD_B, tenant: TENANT_B, subject: "Solo para B" },
   ];
   const messages: { id: string; thread_id: string; sender_user_id: string; body: string }[] = [];
+  const hides = new Set<string>();
+  const inbox = [
+    {
+      id: MSG_A,
+      tenant: TENANT_A,
+      subject: "Recibo de octubre",
+      body: "Tu recibo",
+      created_at: "2026-10-01T00:00:00Z",
+      sender_name: "RENT",
+      mine: false,
+      read: false,
+    },
+    {
+      id: MSG_B,
+      tenant: TENANT_B,
+      subject: "Solo para B",
+      body: "Secreto",
+      created_at: "2026-10-02T00:00:00Z",
+      sender_name: "RENT",
+      mine: false,
+      read: false,
+    },
+  ];
+  const alerts = [
+    {
+      id: ALERT_A,
+      tenant: TENANT_A,
+      title: "Primer aviso de mora",
+      body: "Saldo de A",
+      read_at: null as string | null,
+      created_at: "2026-08-02T13:00:00Z",
+    },
+    {
+      id: ALERT_B,
+      tenant: TENANT_B,
+      title: "Primer aviso de mora",
+      body: "Saldo de B",
+      read_at: null as string | null,
+      created_at: "2026-08-02T13:00:00Z",
+    },
+  ];
   const workOrders: WorkOrder[] = [
     {
       id: "a0000000-0000-4000-8000-00000000000b",
@@ -73,12 +118,34 @@ function createSql() {
       }
       return [{ r2_key: doc.r2_key, filename: "contrato.pdf", mime: "application/pdf", size_bytes: 3 }];
     }
-    if (text.includes("FROM message_threads t") && text.includes("LIMIT 50")) {
+    if (text.includes("portal_late_notices")) {
       const [org, tenant] = params as string[];
       if (org !== ORG) return [];
-      return threads
+      return alerts
         .filter((row) => row.tenant === tenant)
-        .map((row) => ({ id: row.id, subject: row.subject, last_message_at: "2026-10-01T00:00:00Z", unread_count: 0 }));
+        .map(({ tenant: _tenant, ...row }) => row);
+    }
+    if (text.includes("UPDATE notifications") && text.includes("rent_late_notice")) {
+      const [id, org, tenant] = params as string[];
+      const row = alerts.find((item) => item.id === id && item.tenant === tenant && org === ORG);
+      if (!row) return [];
+      row.read_at = row.read_at ?? "2026-08-02T14:00:00Z";
+      return [{ id: row.id, read_at: row.read_at }];
+    }
+    if (text.includes("portal_inbox")) {
+      const [org, tenant, userId] = params as string[];
+      if (org !== ORG) return [];
+      return inbox
+        .filter((row) => row.tenant === tenant && !hides.has(`${userId}:${row.id}`))
+        .map(({ tenant: _tenant, ...row }) => row);
+    }
+    if (text.includes("INSERT INTO portal_message_hides")) {
+      const [, tenant, userId, ids] = params as [string, string, string, string[]];
+      for (const id of ids ?? []) {
+        const row = inbox.find((item) => item.id === id && item.tenant === tenant);
+        if (row) hides.add(`${userId}:${id}`);
+      }
+      return [];
     }
     if (text.includes("FROM message_threads t") && text.includes("t.id = $3")) {
       const [org, tenant, id] = params as string[];
@@ -181,16 +248,46 @@ describe("portal isolation (documents)", () => {
     const app = portalApp(sql, null);
     expect((await app.request(`/api/portal/documents/${DOC_A}`)).status).toBe(404);
     expect((await app.request("/api/portal/home")).status).toBe(403);
+    expect((await app.request("/api/portal/alerts")).status).toBe(403);
     expect((await app.request("/api/portal/work-orders")).status).toBe(403);
   });
 });
 
+describe("portal isolation (late notices)", () => {
+  it("lists only this tenant's payment notices", async () => {
+    const { sql } = createSql();
+    const res = await portalApp(sql).request("/api/portal/alerts");
+    const body = (await res.json()) as { alerts: { id: string; body: string }[] };
+    expect(body.alerts.map((row) => row.id)).toEqual([ALERT_A]);
+    expect(body.alerts[0]?.body).toBe("Saldo de A");
+  });
+
+  it("does not mark another tenant's notice as read", async () => {
+    const { sql } = createSql();
+    const app = portalApp(sql);
+    const res = await app.request(`/api/portal/alerts/${ALERT_B}/read`, { method: "POST" });
+    expect(res.status).toBe(404);
+    const own = await app.request(`/api/portal/alerts/${ALERT_A}/read`, { method: "POST" });
+    expect(own.status).toBe(200);
+  });
+});
+
 describe("portal isolation (mail)", () => {
-  it("lists only threads where this tenant participates", async () => {
+  it("lists only messages where this tenant participates", async () => {
     const { sql } = createSql();
     const res = await portalApp(sql).request("/api/portal/messages");
-    const body = (await res.json()) as { threads: { id: string }[] };
-    expect(body.threads.map((row) => row.id)).toEqual([THREAD_A]);
+    const body = (await res.json()) as { messages: { id: string }[] };
+    expect(body.messages.map((row) => row.id)).toEqual([MSG_A]);
+  });
+
+  it("does not hide a message that belongs to another tenant", async () => {
+    const { sql } = createSql();
+    const app = portalApp(sql);
+    const hidden = await app.request("/api/portal/messages/state", postJson({ ids: [MSG_B], action: "hide" }));
+    expect(hidden.status).toBe(200);
+    const res = await app.request("/api/portal/messages");
+    const body = (await res.json()) as { messages: { id: string }[] };
+    expect(body.messages.map((row) => row.id)).toEqual([MSG_A]);
   });
 
   it("hides and refuses replies to another tenant's thread", async () => {
@@ -248,12 +345,17 @@ describe("portal isolation (work orders)", () => {
       "/api/portal/work-orders",
       postJson({
         lease_id: LEASE_A,
-        title: "Gotera en el baño",
-        priority: "high",
+        location: "Baño",
+        category: "Plomería",
+        problem: "Fuga de agua",
+        description: "Gotea debajo del lavabo",
+        has_pet: false,
+        entry_allowed: true,
         unit_id: UNIT_B,
         tenant_id: TENANT_B,
         vendor_id: PROPERTY,
         cost: 9999,
+        priority: "high",
       }),
     );
     expect(res.status).toBe(201);
@@ -262,7 +364,7 @@ describe("portal isolation (work orders)", () => {
       tenant_id: TENANT_A,
       unit_id: UNIT_A,
       property_id: PROPERTY,
-      title: "Gotera en el baño",
+      title: "Plomería · Fuga de agua",
       status: "open",
     });
   });

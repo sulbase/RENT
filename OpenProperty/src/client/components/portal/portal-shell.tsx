@@ -5,11 +5,11 @@ import { parseSettings } from "@/hooks/use-app-state";
 import { internalFromLocation, toAppHref } from "../../../shared/public-site";
 import { PortalContext, type PortalState } from "./portal-context";
 import { PortalHomePage } from "./portal-home";
-import { PortalMaintenancePage } from "./portal-maintenance";
 import { PortalMailPage } from "./portal-mail";
 import { PortalSettingsPage } from "./portal-settings";
 import { PortalPaymentsPage } from "./portal-payments";
 import { PortalDepartmentPage } from "./portal-department";
+import { PortalContactPage } from "./portal-contact";
 import { PortalNav, type PortalNavId } from "./portal-nav";
 import type { PortalHome } from "./portal-types";
 
@@ -21,7 +21,7 @@ const ROUTE_PATH: Record<PortalRoute, string> = {
   home: HOME_PATH,
   payments: "/portal/pagos",
   department: "/portal/departamento",
-  maintenance: "/portal/mantenimiento",
+  contact: "/portal/contacto",
   mail: "/portal/correo",
   settings: "/portal/ajustes",
 };
@@ -32,9 +32,15 @@ function here(): string {
 
 function parse(href: string): PortalRoute {
   const path = internalFromLocation(href.split("?")[0] ?? href);
-  if (path === ROUTE_PATH.payments) return "payments";
-  if (path === ROUTE_PATH.department) return "department";
-  if (path === ROUTE_PATH.maintenance) return "maintenance";
+  if (path === ROUTE_PATH.payments || path.startsWith(`${ROUTE_PATH.payments}/`)) return "payments";
+  if (
+    path === ROUTE_PATH.department ||
+    path.startsWith(`${ROUTE_PATH.department}/`) ||
+    path === "/portal/mantenimiento"
+  ) {
+    return "department";
+  }
+  if (path === ROUTE_PATH.contact) return "contact";
   if (path === ROUTE_PATH.mail) return "mail";
   if (path === ROUTE_PATH.settings) return "settings";
   return "home";
@@ -96,7 +102,9 @@ export function PortalShell() {
         <PortalNav
           active={route}
           leases={home?.leases ?? []}
+          selectedLeaseId={new URLSearchParams(location.split("?")[1] ?? "").get("lease")}
           onNavigate={(id) => navigate(ROUTE_PATH[id])}
+          onPickLease={(leaseId) => navigate(`/portal/departamento?lease=${leaseId}`)}
           onSignOut={() => void auth.signOut()}
         />
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -114,7 +122,7 @@ export function PortalShell() {
               {route === "home" && <PortalHomePage />}
               {route === "payments" && <PortalPaymentsPage />}
               {route === "department" && <PortalDepartmentPage />}
-              {route === "maintenance" && <PortalMaintenancePage />}
+              {route === "contact" && <PortalContactPage />}
               {route === "mail" && <PortalMailPage />}
               {route === "settings" && <PortalSettingsPage />}
             </>

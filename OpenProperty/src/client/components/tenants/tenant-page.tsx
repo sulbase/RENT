@@ -11,7 +11,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { leaseStatusLabel } from "@/lib/labels";
 import { TenantIdentification } from "./tenant-identification";
-import { TenantDialog } from "./tenant-dialog";
 import { TenantPortalAccess } from "./tenant-portal-access";
 import { maritalStatusLabel } from "../../../shared/tenant-profile";
 import type { Lease, Tenant, TenantPayment } from "@/types";
@@ -30,22 +29,24 @@ export function TenantPage({ id, navigate }: { id: string; navigate: (to: string
   const [leases, setLeases] = useState<Lease[]>([]);
   const [payments, setPayments] = useState<TenantPayment[]>([]);
   const [charges, setCharges] = useState<LedgerCharge[]>([]);
+  const [contacts, setContacts] = useState<HouseholdContact[]>([]);
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(false);
   const [unitFilter, setUnitFilter] = useState("all");
 
   async function load() {
     try {
       setLoading(true);
-      const [{ tenant: t }, ll, pay] = await Promise.all([
+      const [{ tenant: t }, ll, pay, household] = await Promise.all([
         api<{ tenant: Tenant }>("GET", `/api/tenants/${id}`),
         app.listLeases({ tenant_id: id }),
         api<{ payments: TenantPayment[]; charges: LedgerCharge[] }>("GET", `/api/tenants/${id}/payments`),
+        api<{ contacts: HouseholdContact[] }>("GET", `/api/tenants/${id}/household`),
       ]);
       setTenant(t);
       setLeases(ll);
       setPayments(pay.payments);
       setCharges(pay.charges);
+      setContacts(household.contacts);
     } catch (err) {
       app.setError((err as Error).message);
     } finally {
@@ -111,7 +112,7 @@ export function TenantPage({ id, navigate }: { id: string; navigate: (to: string
               </div>
             </div>
           </div>
-          <Button variant="outline" onClick={() => setEditing(true)}>
+          <Button variant="outline" onClick={() => navigate(`/tenants/${tenant.id}/edit`)}>
             <Pencil className="mr-1 h-4 w-4" /> Editar
           </Button>
         </header>
@@ -130,8 +131,6 @@ export function TenantPage({ id, navigate }: { id: string; navigate: (to: string
               </div>
               {activeLeases.length === 0 ? (
                 <p className="mt-2 text-sm text-muted-foreground">No hay contrato vigente.</p>
-              ) : activeLeases.length === 1 ? (
-                <ActiveLeaseFields lease={activeLeases[0]} currency={app.settings.currency} />
               ) : (
                 <ul className="mt-2 divide-y">
                   {activeLeases.map((lease) => (
@@ -211,7 +210,6 @@ export function TenantPage({ id, navigate }: { id: string; navigate: (to: string
               <h2 className="mb-3 text-[1.0625rem] font-semibold leading-tight">Acerca de</h2>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <Field label="Fecha de nacimiento">{tenant.date_of_birth ? formatDate(tenant.date_of_birth) : "—"}</Field>
-                <Field label="Contacto de emergencia">{tenant.emergency_contact || "—"}</Field>
                 <Field label="Empleador">{tenant.employer || "—"}</Field>
                 <Field label="Ingreso mensual">
                   {tenant.monthly_income != null ? formatMoney(tenant.monthly_income, app.settings.currency) : "—"}
@@ -231,6 +229,11 @@ export function TenantPage({ id, navigate }: { id: string; navigate: (to: string
                   <p className="mt-1 whitespace-pre-wrap text-sm">{tenant.notes}</p>
                 </>
               )}
+            </Card>
+
+            <Card className="p-5">
+              <h2 className="mb-3 text-[1.0625rem] font-semibold leading-tight">Contactos de emergencia</h2>
+              <EmergencyContacts contacts={contacts} />
             </Card>
 
             <Card className="p-5">
@@ -264,12 +267,34 @@ export function TenantPage({ id, navigate }: { id: string; navigate: (to: string
           </TabsContent>
         </Tabs>
 
-      <TenantDialog
-        open={editing}
-        onOpenChange={(o) => { setEditing(o); if (!o) load(); }}
-        tenant={tenant}
-      />
     </PageShell>
+  );
+}
+
+type HouseholdContact = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  relationship: string;
+  phone: string;
+};
+
+function EmergencyContacts({ contacts }: { contacts: HouseholdContact[] }) {
+  if (contacts.length === 0) {
+    return <p className="text-sm text-muted-foreground">Sin contactos de emergencia.</p>;
+  }
+  return (
+    <ul className="space-y-1">
+      {contacts.map((contact) => (
+        <li key={contact.id} className="text-sm">
+          <span className="font-medium">{[contact.first_name, contact.last_name].filter(Boolean).join(" ")}</span>
+          <span className="text-muted-foreground">
+            {" · "}
+            {[contact.relationship, contact.phone].filter(Boolean).join(" · ")}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 

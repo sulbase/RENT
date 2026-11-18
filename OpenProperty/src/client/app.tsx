@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { AppNav, reportLocation, type AppNavItem } from "@clawnify/app/client";
+import { useCallback, useEffect, useState } from "react";
+import { reportLocation } from "@clawnify/app/client";
 import { useAppState } from "./hooks/use-app-state";
 import { useRouter, type Route } from "./hooks/use-router";
 import { AppContext } from "./context";
@@ -7,9 +7,14 @@ import { ErrorBanner } from "./components/error-banner";
 import { DashboardPage } from "./components/dashboard/dashboard-page";
 import { PropertiesList } from "./components/properties/properties-list";
 import { PropertyPage } from "./components/properties/property-page";
+import { PropertyEditPage } from "./components/properties/property-edit-page";
+import { UnitEditPage } from "./components/properties/unit-edit-page";
+import { WorkOrderNewPage } from "./components/properties/work-order-new-page";
 import { TenantsList } from "./components/tenants/tenants-list";
 import { TenantPage } from "./components/tenants/tenant-page";
+import { TenantEditPage } from "./components/tenants/tenant-edit-page";
 import { LeasesPage } from "./components/leases/leases-page";
+import { LeaseEditPage } from "./components/leases/lease-edit-page";
 import { RentPage } from "./components/rent/rent-page";
 import { MaintenancePage } from "./components/maintenance/maintenance-page";
 import { MessagesPage } from "./components/messages/messages-page";
@@ -22,29 +27,22 @@ import { NewPasswordPage } from "./components/auth/new-password-page";
 import { OrgGatePage } from "./components/auth/org-gate-page";
 import { PortalShell } from "./components/portal/portal-shell";
 import { Button } from "./components/ui/button";
-import { AppNavSignOut } from "./components/app-nav-sign-out";
-import { toAppHref } from "../shared/public-site";
+import { AdminNav, adminNavPath, type AdminNavId } from "./components/admin-nav";
+import { api } from "./api";
 import { resolveAuthScreen } from "./lib/auth-gate";
 
-const PORTFOLIO: AppNavItem[] = [
-  { id: "dashboard", label: "Panel", href: toAppHref("/dashboard"), home: true },
-  { id: "properties", label: "Propiedades", href: toAppHref("/properties"), icon: "building-2", color: "green" },
-  { id: "tenants", label: "Inquilinos", href: toAppHref("/tenants"), icon: "users", color: "blue" },
-  { id: "leases", label: "Contratos", href: toAppHref("/leases"), icon: "clipboard-list", color: "violet" },
-];
-const OPERATIONS: AppNavItem[] = [
-  { id: "rent", label: "Rentas", href: toAppHref("/rent"), icon: "dollar-sign", color: "amber" },
-  { id: "maintenance", label: "Mantenimiento", href: toAppHref("/maintenance"), icon: "list-checks", color: "orange" },
-  { id: "messages", label: "Correo", href: toAppHref("/messages"), icon: "mail", color: "blue" },
-];
-const ADMIN: AppNavItem[] = [
-  { id: "vendors", label: "Proveedores", href: toAppHref("/vendors"), icon: "truck", color: "sky" },
-  { id: "settings", label: "Ajustes", href: toAppHref("/settings"), icon: "settings" },
-];
-
 function activeFor(route: Route): string {
-  if (route.name === "property") return "properties";
-  if (route.name === "tenant") return "tenants";
+  if (
+    route.name === "property" ||
+    route.name === "property-edit" ||
+    route.name === "unit-new" ||
+    route.name === "unit-edit" ||
+    route.name === "work-order-new"
+  ) {
+    return "properties";
+  }
+  if (route.name === "tenant" || route.name === "tenant-edit") return "tenants";
+  if (route.name === "lease-edit") return "leases";
   return route.name;
 }
 
@@ -123,31 +121,48 @@ function AuthenticatedShell() {
   const state = useAppState();
   const { path, route, navigate } = useRouter();
   const auth = useAuth();
+  const [mailUnread, setMailUnread] = useState(false);
+  const organizationName =
+    auth.memberships.find((membership) => membership.organization_id === auth.organizationId)?.name ?? null;
+  const onUnreadCount = useCallback((count: number) => setMailUnread(count > 0), []);
+
+  useEffect(() => {
+    let stop = false;
+    async function tick() {
+      try {
+        const data = await api<{ unread_count: number }>("GET", "/api/messages?box=inbox&limit=1");
+        if (!stop) setMailUnread(data.unread_count > 0);
+      } catch {
+        /* the mailbox badge waits for the next check */
+      }
+    }
+    void tick();
+    const timer = window.setInterval(() => void tick(), 30_000);
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.classList.add("portal-theme");
+    return () => document.documentElement.classList.remove("portal-theme");
+  }, []);
 
   useEffect(() => {
     reportLocation(path);
   }, [path]);
 
-  const groups = [
-    { items: PORTFOLIO },
-    { label: "Operación", items: OPERATIONS },
-    { label: "Administración", items: ADMIN },
-  ];
-
   return (
     <AppContext.Provider value={state}>
       <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground md:flex-row">
-        <div className="flex shrink-0">
-          <AppNav
-            title="RENT"
-            icon="home"
-            groups={groups}
-            active={activeFor(route)}
-            onNavigate={(item) => navigate(item.href ?? "/dashboard")}
-          >
-            <AppNavSignOut onSignOut={() => auth.signOut()} />
-          </AppNav>
-        </div>
+        <AdminNav
+          active={activeFor(route)}
+          organizationName={organizationName}
+          mailUnread={mailUnread}
+          onNavigate={(id: AdminNavId) => navigate(adminNavPath(id))}
+          onSignOut={() => void auth.signOut()}
+        />
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {state.loading ? (
             <div className="flex flex-1 items-center justify-center text-muted-foreground">
@@ -158,12 +173,29 @@ function AuthenticatedShell() {
               {route.name === "dashboard" && <DashboardPage navigate={navigate} />}
               {route.name === "properties" && <PropertiesList navigate={navigate} />}
               {route.name === "property" && <PropertyPage id={route.id} navigate={navigate} />}
+              {route.name === "property-edit" && <PropertyEditPage id={route.id} navigate={navigate} />}
+              {route.name === "unit-new" && (
+                <UnitEditPage key="new" propertyId={route.propertyId} navigate={navigate} />
+              )}
+              {route.name === "work-order-new" && (
+                <WorkOrderNewPage propertyId={route.propertyId} navigate={navigate} />
+              )}
+              {route.name === "unit-edit" && (
+                <UnitEditPage
+                  key={route.unitId}
+                  propertyId={route.propertyId}
+                  unitId={route.unitId}
+                  navigate={navigate}
+                />
+              )}
               {route.name === "tenants" && <TenantsList navigate={navigate} />}
               {route.name === "tenant" && <TenantPage id={route.id} navigate={navigate} />}
+              {route.name === "tenant-edit" && <TenantEditPage id={route.id} navigate={navigate} />}
               {route.name === "leases" && <LeasesPage navigate={navigate} />}
+              {route.name === "lease-edit" && <LeaseEditPage id={route.id} navigate={navigate} />}
               {route.name === "rent" && <RentPage />}
               {route.name === "maintenance" && <MaintenancePage />}
-              {route.name === "messages" && <MessagesPage />}
+              {route.name === "messages" && <MessagesPage onUnreadCount={onUnreadCount} />}
               {route.name === "vendors" && <VendorsPage />}
               {route.name === "settings" && <SettingsPage />}
               {route.name === "not-found" && (

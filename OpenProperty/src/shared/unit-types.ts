@@ -5,8 +5,11 @@ export const BUILTIN_UNIT_TYPES = [
   { value: "departamento", label: "Departamento" },
   { value: "suite", label: "Suite" },
   { value: "local", label: "Local" },
-  { value: "parqueadero", label: "Parqueadero" },
 ] as const;
+
+const RETIRED_UNIT_TYPE_LABELS: Record<string, string> = {
+  parqueadero: "Parqueadero",
+};
 
 export type BuiltinUnitType = (typeof BUILTIN_UNIT_TYPES)[number]["value"];
 
@@ -26,7 +29,11 @@ export function isBuiltinUnitType(value: string): value is BuiltinUnitType {
 }
 
 export function unitTypeLabel(value: string): string {
-  return BUILTIN_UNIT_TYPES.find((item) => item.value === value)?.label ?? value;
+  return (
+    BUILTIN_UNIT_TYPES.find((item) => item.value === value)?.label ??
+    RETIRED_UNIT_TYPE_LABELS[value] ??
+    value
+  );
 }
 
 export function normalizeUnitTypeKinds(input: string[]): UnitTypeKindsResult {

@@ -1,27 +1,18 @@
-import { useEffect, useState } from "react";
-import { api, apiBlob, apiForm } from "@/api";
+import { useEffect, useState, type ReactNode } from "react";
+import { ArrowLeft, Mail, MailOpen, Trash2, X } from "lucide-react";
+import { api, apiBlob } from "@/api";
 import { PageShell } from "@/components/page-shell";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
-type Box = "inbox" | "sent";
+const CONTACT_REASONS = ["Mantenimiento", "Pagos", "Contrato", "Acceso", "Otro"] as const;
+const BODY_MAX = 1000;
 
-type RecipientChoice = {
-  kind: "membership" | "tenant";
-  id: string;
-  email: string;
-  label: string;
-};
+type MailView = "list" | "letter" | "compose";
 
 type Participant = {
   participant_kind: "membership" | "tenant";
@@ -31,28 +22,41 @@ type Participant = {
   tenant_id: string | null;
 };
 
-type ThreadRow = {
-  id: string;
-  subject: string;
-  last_message_at: string;
-  unread_count: number;
-  participants: Participant[];
-};
-
 type Attachment = { id: string; filename: string; mime: string };
 
-type MailMessage = {
+type MailRow = {
   id: string;
-  sender_user_id: string;
+  thread_id: string;
+  subject: string;
   body: string;
   created_at: string;
-  attachments: Attachment[];
+  sender_user_id: string;
+  sender_email: string;
+  mine: boolean;
+  read: boolean;
 };
 
 function formatWhen(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("es", { dateStyle: "medium", timeStyle: "short" });
+  return date.toLocaleDateString("es", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatOpened(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("es", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function people(participants: Participant[], roles: Array<"from" | "to" | "cc">) {
@@ -62,136 +66,97 @@ function people(participants: Participant[], roles: Array<"from" | "to" | "cc">)
     .join(", ");
 }
 
-export function MessagesPage() {
-  const [box, setBox] = useState<Box>("inbox");
-  const [threads, setThreads] = useState<ThreadRow[]>([]);
+export function MessagesPage({ onUnreadCount }: { onUnreadCount?: (count: number) => void }) {
+  const [view, setView] = useState<MailView>("list");
+  const [rows, setRows] = useState<MailRow[]>([]);
   const [unread, setUnread] = useState(0);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [subject, setSubject] = useState("");
+  const [opened, setOpened] = useState<MailRow | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
-  const [messages, setMessages] = useState<MailMessage[]>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [replying, setReplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [composeOpen, setComposeOpen] = useState(false);
-  const [draft, setDraft] = useState({ subject: "", body: "", forward: false });
-  const [toId, setToId] = useState("");
-  const [ccId, setCcId] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [composeSeed, setComposeSeed] = useState({ subject: "", body: "" });
   const [reply, setReply] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
-  const [directory, setDirectory] = useState<RecipientChoice[]>([]);
 
-  async function loadThreads(nextBox = box) {
-    const data = await api<{ threads: ThreadRow[]; unread_count: number }>(
+  async function loadRows() {
+    const data = await api<{ messages: MailRow[]; unread_count: number }>(
       "GET",
-      `/api/messages?box=${nextBox}`,
+      "/api/messages?box=inbox",
     );
-    setThreads(data.threads);
+    setRows(data.messages);
     setUnread(data.unread_count);
-  }
-
-  async function openThread(id: string, nextBox = box) {
-    setSelectedId(id);
-    const data = await api<{
-      thread: { subject: string };
-      participants: Participant[];
-      messages: MailMessage[];
-    }>("GET", `/api/messages/${id}`);
-    setSubject(data.thread.subject);
-    setParticipants(data.participants);
-    setMessages(data.messages);
-    await api("POST", `/api/messages/${id}/read`);
-    await loadThreads(nextBox);
+    onUnreadCount?.(data.unread_count);
+    return data.messages;
   }
 
   useEffect(() => {
-    void loadThreads().catch((err: Error) => setError(err.message));
-  }, [box]);
-
-  useEffect(() => {
-    void api<{
-      members: { user_id: string; email: string }[];
-      tenants: { id: string; first_name: string; last_name: string; email: string }[];
-    }>("GET", "/api/messages/recipients")
-      .then((data) => {
-        setDirectory([
-          ...data.members.map((member) => ({
-            kind: "membership" as const,
-            id: member.user_id,
-            email: member.email,
-            label: member.email,
-          })),
-          ...data.tenants.map((tenant) => ({
-            kind: "tenant" as const,
-            id: tenant.id,
-            email: tenant.email,
-            label: `${tenant.first_name} ${tenant.last_name} · ${tenant.email}`,
-          })),
-        ]);
-      })
-      .catch(() => undefined);
+    void loadRows().catch((err: Error) => setError(err.message));
   }, []);
 
-  function choice(key: string) {
-    const [kind, id] = key.split(":");
-    return directory.find((row) => row.kind === kind && row.id === id);
+  async function openLetter(row: MailRow) {
+    setOpened(row);
+    setView("letter");
+    setReplying(false);
+    setReply("");
+    setParticipants([]);
+    setAttachments([]);
+    const data = await api<{
+      participants: Participant[];
+      messages: { id: string; attachments: Attachment[] }[];
+    }>("GET", `/api/messages/${row.thread_id}`);
+    setParticipants(data.participants);
+    setAttachments(data.messages.find((message) => message.id === row.id)?.attachments ?? []);
+    if (!row.read && !row.mine) {
+      await api("POST", `/api/messages/${row.thread_id}/read`, { message_id: row.id });
+      setOpened({ ...row, read: true });
+      await loadRows();
+    }
   }
 
-  async function sendNew() {
-    const to = choice(toId);
-    if (!to) {
-      setError("Elige un destinatario de la organización.");
-      return;
-    }
-    const cc = ccId ? choice(ccId) : undefined;
-    if (ccId && !cc) {
-      setError("El CC no pertenece a la organización.");
-      return;
-    }
+  function closeLetter() {
+    setView("list");
+    setOpened(null);
+    setReplying(false);
+    setReply("");
+  }
+
+  async function changeState(action: "read" | "unread" | "hide", ids: string[]) {
+    if (ids.length === 0) return;
     setBusy(true);
     setError(null);
     try {
-      const created = await api<{ thread: { id: string }; message: { id: string } }>(
-        "POST",
-        "/api/messages",
-        {
-          subject: draft.subject,
-          body: draft.body,
-          recipients: [
-            { kind: to.kind, id: to.id, role: "to" },
-            ...(cc && cc.id !== to.id ? [{ kind: cc.kind, id: cc.id, role: "cc" as const }] : []),
-          ],
-        },
-      );
-      for (const file of files) {
-        const form = new FormData();
-        form.set("entity_type", "message");
-        form.set("entity_id", created.message.id);
-        form.set("kind", file.type.startsWith("image/") ? "image" : "other");
-        form.set("file", file);
-        await apiForm("/api/documents", form);
-      }
-      setComposeOpen(false);
-      setDraft({ subject: "", body: "", forward: false });
-      setFiles([]);
-      setToId("");
-      setCcId("");
-      setBox("sent");
-      await openThread(created.thread.id, "sent");
+      await api("POST", "/api/messages/state", { ids, action });
+      setSelected([]);
+      await loadRows();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo enviar");
+      setError(err instanceof Error ? err.message : "No se pudo actualizar el correo");
     } finally {
       setBusy(false);
     }
   }
 
+  function openCompose(seed = { subject: "", body: "" }) {
+    setNotice(null);
+    setError(null);
+    setComposeSeed(seed);
+    setView("compose");
+  }
+
   async function sendReply() {
-    if (!selectedId || !reply.trim()) return;
+    if (!opened || !reply.trim()) return;
     setBusy(true);
     setError(null);
     try {
-      await api("POST", `/api/messages/${selectedId}/replies`, { body: reply });
+      await api("POST", `/api/messages/${opened.thread_id}/replies`, { body: reply });
       setReply("");
-      await openThread(selectedId);
+      setReplying(false);
+      setView("list");
+      setOpened(null);
+      setNotice("Enviado exitosamente");
+      await loadRows();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo responder");
     } finally {
@@ -207,215 +172,411 @@ export function MessagesPage() {
   }
 
   function startForward() {
-    const quoted = messages.map((message) => message.body).join("\n\n");
-    setDraft({
-      subject: subject.startsWith("Fwd:") ? subject : `Fwd: ${subject}`,
-      body: `\n\n---------- Mensaje reenviado ----------\n${quoted}`,
-      forward: true,
+    if (!opened) return;
+    openCompose({
+      subject: opened.subject.startsWith("Fwd:") ? opened.subject : `Fwd: ${opened.subject}`,
+      body: `\n\n---------- Mensaje reenviado ----------\n${opened.body}`,
     });
-    setToId("");
-    setCcId("");
-    setFiles([]);
-    setComposeOpen(true);
   }
+
+  const toLine = people(participants, ["to"]);
+  const ccLine = people(participants, ["cc"]);
+  const allSelected = rows.length > 0 && selected.length === rows.length;
 
   return (
     <PageShell
-      title="Correo"
-      meta={unread > 0 ? `${unread} sin leer` : "Mensajes de la organización"}
+      title="Mensajes"
+      meta={unread > 0 ? `${unread} sin leer` : undefined}
       actions={
-        <Button
-          onClick={() => {
-            setDraft({ subject: "", body: "", forward: false });
-            setComposeOpen(true);
-          }}
-        >
-          Redactar
-        </Button>
+        view === "list" ? (
+          <Button onClick={() => openCompose()}>
+            Redactar
+          </Button>
+        ) : undefined
       }
     >
       {error && <p className="text-sm text-destructive">{error}</p>}
-      <div className="flex gap-2">
-        {(["inbox", "sent"] as const).map((item) => (
-          <Button
-            key={item}
-            variant={box === item ? "default" : "secondary"}
-            onClick={() => {
-              setBox(item);
-              setSelectedId(null);
-            }}
-          >
-            {item === "inbox" ? "Entrada" : "Enviados"}
-          </Button>
-        ))}
-      </div>
-      <div className="grid min-h-[28rem] gap-4 md:grid-cols-[18rem_minmax(0,1fr)]">
-        <div className="overflow-hidden rounded-md border border-border">
-          {threads.length === 0 ? (
-            <p className="p-4 text-sm text-muted-foreground">No hay mensajes en esta bandeja.</p>
-          ) : (
-            threads.map((thread) => (
-              <button
-                key={thread.id}
-                type="button"
-                className={cn(
-                  "block w-full border-b border-border px-3 py-3 text-left last:border-b-0",
-                  selectedId === thread.id ? "bg-muted" : "hover:bg-muted/60",
-                )}
-                onClick={() => void openThread(thread.id).catch((err: Error) => setError(err.message))}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-medium">{thread.subject}</span>
-                  {thread.unread_count > 0 && (
-                    <span className="text-xs text-muted-foreground">{thread.unread_count}</span>
-                  )}
-                </div>
-                <p className="truncate text-xs text-muted-foreground">
-                  {people(thread.participants, ["from", "to"]) || "Sin destinatarios"}
-                </p>
-                <p className="text-xs text-muted-foreground">{formatWhen(thread.last_message_at)}</p>
-              </button>
-            ))
-          )}
-        </div>
-        <div className="flex min-h-0 flex-col rounded-md border border-border">
-          {!selectedId ? (
-            <p className="p-4 text-sm text-muted-foreground">Selecciona un hilo para leerlo.</p>
-          ) : (
-            <>
-              <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
-                <div>
-                  <h2 className="text-base font-semibold">{subject}</h2>
-                  <p className="text-xs text-muted-foreground">
-                    Para: {people(participants, ["to"]) || "—"}
-                    {people(participants, ["cc"]) ? ` · CC: ${people(participants, ["cc"])}` : ""}
-                  </p>
-                </div>
-                <Button variant="secondary" onClick={startForward}>
-                  Reenviar
-                </Button>
-              </div>
-              <div className="flex-1 space-y-4 overflow-auto p-4">
-                {messages.map((message) => (
-                  <article key={message.id} className="space-y-2">
-                    <p className="text-xs text-muted-foreground">{formatWhen(message.created_at)}</p>
-                    <p className="whitespace-pre-wrap text-sm">{message.body}</p>
-                    {message.attachments.length > 0 && (
-                      <ul className="text-sm">
-                        {message.attachments.map((file) => (
-                          <li key={file.id}>
-                            <button
-                              type="button"
-                              className="underline"
-                              onClick={() => void openAttachment(file)}
-                            >
-                              {file.filename}
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </article>
-                ))}
-              </div>
-              <form
-                className="space-y-2 border-t border-border p-4"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void sendReply();
-                }}
-              >
-                <Label htmlFor="reply-body">Responder</Label>
-                <Textarea
-                  id="reply-body"
-                  value={reply}
-                  onChange={(event) => setReply(event.target.value)}
-                  placeholder="Escribe un mensaje de texto"
-                />
-                <Button type="submit" disabled={busy || reply.trim().length === 0}>
-                  Enviar respuesta
-                </Button>
-              </form>
-            </>
-          )}
-        </div>
-      </div>
-
-      <Dialog open={composeOpen} onOpenChange={setComposeOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{draft.forward ? "Reenviar" : "Nuevo mensaje"}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-1">
-              <Label htmlFor="mail-to">Para</Label>
-              <select
-                id="mail-to"
-                className="h-8 w-full rounded-sm bg-card px-2 text-sm shadow-edge"
-                value={toId}
-                onChange={(event) => setToId(event.target.value)}
-              >
-                <option value="">Selecciona un miembro o inquilino</option>
-                {directory.map((row) => (
-                  <option key={`${row.kind}:${row.id}`} value={`${row.kind}:${row.id}`}>
-                    {row.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="mail-cc">CC</Label>
-              <select
-                id="mail-cc"
-                className="h-8 w-full rounded-sm bg-card px-2 text-sm shadow-edge"
-                value={ccId}
-                onChange={(event) => setCcId(event.target.value)}
-              >
-                <option value="">Ninguno</option>
-                {directory.map((row) => (
-                  <option key={`${row.kind}:${row.id}`} value={`${row.kind}:${row.id}`}>
-                    {row.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="mail-subject">Asunto</Label>
-              <Input
-                id="mail-subject"
-                value={draft.subject}
-                onChange={(event) => setDraft((current) => ({ ...current, subject: event.target.value }))}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="mail-body">Mensaje</Label>
-              <Textarea
-                id="mail-body"
-                className="min-h-40"
-                value={draft.body}
-                onChange={(event) => setDraft((current) => ({ ...current, body: event.target.value }))}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="mail-files">Adjuntos</Label>
-              <Input
-                id="mail-files"
-                type="file"
-                multiple
-                onChange={(event) => setFiles([...(event.target.files ?? [])])}
-              />
+      {notice && view === "list" && <p className="text-sm">{notice}</p>}
+      {view === "compose" ? (
+        <ComposeForm
+          initialSubject={composeSeed.subject}
+          initialBody={composeSeed.body}
+          busy={busy}
+          setBusy={setBusy}
+          onCancel={() => setView("list")}
+          onError={setError}
+          onSent={async () => {
+            setView("list");
+            setOpened(null);
+            setNotice("Enviado exitosamente");
+            await loadRows();
+          }}
+        />
+      ) : view === "letter" && opened ? (
+        <article>
+          <div className="flex items-start justify-between gap-3">
+            <button
+              type="button"
+              className="inline-flex min-w-0 cursor-pointer items-center gap-2 text-lg font-semibold"
+              onClick={closeLetter}
+            >
+              <ArrowLeft className="size-5 shrink-0" aria-hidden />
+              <span className="truncate">{opened.subject}</span>
+            </button>
+            <div className="flex shrink-0 gap-2">
+              <Button variant="secondary" onClick={() => setReplying(true)}>
+                Responder
+              </Button>
+              <Button variant="secondary" onClick={startForward}>
+                Reenviar
+              </Button>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="secondary" onClick={() => setComposeOpen(false)}>
-              Cancelar
-            </Button>
-            <Button disabled={busy} onClick={() => void sendNew()}>
-              Enviar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          <div className="mt-6 flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-semibold">{opened.sender_email || "Sin remitente"}</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Para: {toLine || "—"}
+                {ccLine ? ` · CC: ${ccLine}` : ""}
+              </p>
+            </div>
+            <p className="shrink-0 text-sm text-muted-foreground">{formatOpened(opened.created_at)}</p>
+          </div>
+          <div className="mx-auto mt-6 max-w-3xl bg-white px-8 py-6 text-sm leading-relaxed text-neutral-900">
+            <p className="whitespace-pre-wrap">{opened.body}</p>
+            {attachments.length > 0 && (
+              <ul className="mt-4">
+                {attachments.map((file) => (
+                  <li key={file.id}>
+                    <button type="button" className="underline" onClick={() => void openAttachment(file)}>
+                      {file.filename}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          {replying && (
+            <form
+              className="mx-auto mt-4 max-w-3xl space-y-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void sendReply();
+              }}
+            >
+              <Label htmlFor="reply-body">Respuesta</Label>
+              <Textarea
+                id="reply-body"
+                value={reply}
+                onChange={(event) => setReply(event.target.value)}
+                placeholder="Escribe la respuesta"
+              />
+              <div className="flex gap-2">
+                <Button type="submit" disabled={busy || reply.trim().length === 0}>
+                  Enviar
+                </Button>
+                <Button type="button" variant="secondary" onClick={() => setReplying(false)}>
+                  Cancelar
+                </Button>
+              </div>
+            </form>
+          )}
+        </article>
+      ) : (
+        <div>
+          <h2 className="text-2xl font-semibold">Bandeja de entrada</h2>
+          {rows.length === 0 ? (
+            <p className="py-16 text-center text-sm text-muted-foreground">No hay mensajes.</p>
+          ) : (
+            <div className="mt-4">
+              <div className="flex items-center justify-between gap-3 border-b border-white px-3 py-2">
+                <label className="flex cursor-pointer items-center gap-3 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={(event) => setSelected(event.target.checked ? rows.map((row) => row.id) : [])}
+                  />
+                  Seleccionar todos
+                </label>
+                {selected.length > 0 && (
+                  <div className="flex items-center gap-1">
+                    <IconButton label="Marcar como leído" disabled={busy} onClick={() => void changeState("read", selected)}>
+                      <MailOpen className="size-4" />
+                    </IconButton>
+                    <IconButton label="Marcar como no leído" disabled={busy} onClick={() => void changeState("unread", selected)}>
+                      <Mail className="size-4" />
+                    </IconButton>
+                    <IconButton label="Eliminar" disabled={busy} onClick={() => void changeState("hide", selected)}>
+                      <Trash2 className="size-4" />
+                    </IconButton>
+                    <IconButton label="Cancelar" disabled={busy} onClick={() => setSelected([])}>
+                      <X className="size-4" />
+                    </IconButton>
+                  </div>
+                )}
+              </div>
+              <ul className="border-b border-white">
+                {rows.map((row) => {
+                  const isSelected = selected.includes(row.id);
+                  const isRead = row.read === true;
+                  return (
+                    <li
+                      key={row.id}
+                      className={cn(
+                        "flex items-center gap-3 border-b border-white px-3 py-3 last:border-b-0",
+                        isSelected ? "bg-[#9a9894] text-[#100f0e]" : isRead ? "bg-[#2a2928]" : "bg-[#100f0e]",
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        aria-label={`Seleccionar ${row.subject}`}
+                        checked={isSelected}
+                        onChange={(event) => {
+                          setSelected((current) =>
+                            event.target.checked ? [...current, row.id] : current.filter((id) => id !== row.id),
+                          );
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-4 text-left"
+                        onClick={() => void openLetter(row).catch((err: Error) => setError(err.message))}
+                      >
+                        <span className="truncate text-sm">{row.subject}</span>
+                        <span className={cn("shrink-0 text-xs", isSelected ? "text-[#100f0e]" : "text-muted-foreground")}>
+                          {formatWhen(row.created_at)}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
     </PageShell>
+  );
+}
+
+type ActiveLease = {
+  id: string;
+  status: string;
+  property_id: string | null;
+  property_name: string | null;
+  unit_name: string | null;
+  primary_tenant_id: string | null;
+  tenant_first_name: string | null;
+  tenant_last_name: string | null;
+  tenant_email: string | null;
+};
+
+const ALL_UNITS = "all";
+
+function ComposeForm({
+  initialSubject,
+  initialBody,
+  busy,
+  setBusy,
+  onCancel,
+  onError,
+  onSent,
+}: {
+  initialSubject: string;
+  initialBody: string;
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
+  onCancel: () => void;
+  onError: (message: string | null) => void;
+  onSent: () => Promise<void>;
+}) {
+  const [leases, setLeases] = useState<ActiveLease[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [propertyId, setPropertyId] = useState("");
+  const [leaseId, setLeaseId] = useState("");
+  const [reason, setReason] = useState("");
+  const [subject, setSubject] = useState(initialSubject);
+  const [body, setBody] = useState(initialBody);
+
+  useEffect(() => {
+    void api<{ leases: ActiveLease[] }>("GET", "/api/leases")
+      .then((data) => {
+        setLeases(
+          data.leases.filter((row) => row.status === "active" && row.primary_tenant_id),
+        );
+      })
+      .catch((err: Error) => onError(err.message))
+      .finally(() => setLoaded(true));
+  }, [onError]);
+
+  async function send() {
+    const targets =
+      leaseId === ALL_UNITS ? units : units.filter((row) => row.id === leaseId);
+    if (targets.length === 0 || targets.some((row) => !row.primary_tenant_id)) return;
+    const missing = targets.filter((row) => !row.tenant_email?.trim());
+    if (missing.length > 0) {
+      onError("Hay inquilinos sin correo en esa selección.");
+      return;
+    }
+    setBusy(true);
+    onError(null);
+    try {
+      for (const lease of targets) {
+        if (!lease.primary_tenant_id) continue;
+        const unitLabel = lease.unit_name ?? "Unidad";
+        await api("POST", "/api/messages", {
+          subject: subject.trim(),
+          body: `Unidad: ${unitLabel}\nRazón de contacto: ${reason}\n\n${body.trim()}`,
+          recipients: [{ kind: "tenant", id: lease.primary_tenant_id, role: "to" }],
+          entity_type: "lease",
+          entity_id: lease.id,
+        });
+      }
+      await onSent();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "No se pudo enviar el mensaje");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const properties = [...new Map(
+    leases
+      .filter((row) => row.property_id)
+      .map((row) => [row.property_id, row.property_name ?? "Propiedad"]),
+  ).entries()].map(([id, name]) => ({ id: id as string, name }));
+  const units = leases.filter((row) => row.property_id === propertyId);
+  const ready = propertyId !== "" && leaseId !== "" && reason !== "" && subject.trim() !== "" && body.trim() !== "";
+
+  return (
+    <div className="max-w-3xl">
+      <h2 className="text-2xl font-semibold">Contactar al inquilino</h2>
+      <p className="mt-4 text-sm">Mensaje al inquilino</p>
+      <div className="mt-4 grid gap-4">
+        {loaded && properties.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No hay un contrato vigente para enviar mensajes.</p>
+        ) : (
+          <>
+            <div>
+              <Label>Propiedad *</Label>
+              <Select
+                value={propertyId}
+                onValueChange={(value) => {
+                  setPropertyId(value);
+                  setLeaseId("");
+                }}
+              >
+                <SelectTrigger aria-label="Propiedad">
+                  <SelectValue placeholder="Seleccionar uno" />
+                </SelectTrigger>
+                <SelectContent>
+                  {properties.map((row) => (
+                    <SelectItem key={row.id} value={row.id}>
+                      {row.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Unidad *</Label>
+              <Select value={leaseId} onValueChange={setLeaseId} disabled={propertyId === ""}>
+                <SelectTrigger aria-label="Unidad">
+                  <SelectValue placeholder="Seleccionar uno" />
+                </SelectTrigger>
+                <SelectContent>
+                  {units.length > 1 && (
+                    <SelectItem value={ALL_UNITS}>Todas las unidades</SelectItem>
+                  )}
+                  {units.map((row) => (
+                    <SelectItem key={row.id} value={row.id}>
+                      {row.unit_name ?? "Unidad"}
+                      {row.tenant_first_name || row.tenant_last_name
+                        ? ` · ${[row.tenant_first_name, row.tenant_last_name].filter(Boolean).join(" ")}`
+                        : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </>
+        )}
+        <div>
+          <Label>Razón de contacto *</Label>
+          <Select value={reason} onValueChange={setReason}>
+            <SelectTrigger aria-label="Razón de contacto">
+              <SelectValue placeholder=" " />
+            </SelectTrigger>
+            <SelectContent>
+              {CONTACT_REASONS.map((item) => (
+                <SelectItem key={item} value={item}>
+                  {item}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <Label htmlFor="mail-subject">Asunto *</Label>
+          <Input
+            id="mail-subject"
+            value={subject}
+            maxLength={200}
+            onChange={(event) => setSubject(event.target.value)}
+          />
+        </div>
+        <div>
+          <Label htmlFor="mail-body">Mensaje *</Label>
+          <Textarea
+            id="mail-body"
+            value={body}
+            maxLength={BODY_MAX}
+            rows={6}
+            onChange={(event) => setBody(event.target.value)}
+          />
+          <p className="mt-1 text-right text-xs text-muted-foreground">
+            {body.length}/{BODY_MAX} caracteres
+          </p>
+        </div>
+      </div>
+      <div className="mt-6 flex gap-2">
+        <Button
+          type="button"
+          className="rounded-full px-4"
+          disabled={busy || !ready || properties.length === 0}
+          onClick={() => void send()}
+        >
+          Enviar mensaje
+        </Button>
+        <Button type="button" variant="outline" className="rounded-full px-4" onClick={onCancel}>
+          Cancelar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function IconButton({
+  label,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      className="cursor-pointer rounded-md p-2 text-sky-400 disabled:opacity-50"
+      onClick={onClick}
+    >
+      {children}
+    </button>
   );
 }
